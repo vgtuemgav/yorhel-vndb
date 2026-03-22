@@ -1,0 +1,284 @@
+package VNWeb::Misc::Reports;
+
+use VNWeb::Prelude;
+
+my $reportsperday = 5;
+
+my @STATUS = qw/new busy done dismissed/;
+my $STATUSRE = '(?:'.join('|', @STATUS).')';
+
+my %OBJ = qw/v VN r Release p Producer c Character s Staff d Doc g Tag i Trait w Review t Thread u User/;
+
+
+# Returns the object associated with the vndbid.num; Returns false if the object can't be reported.
+sub obj($id, $num=undef) {
+    my $o = fu->SQL('SELECT x.*, ', USER, 'FROM', ITEM_INFO($id, $num), 'x LEFT JOIN users u ON u.id = x.uid')->rowh;
+    $o->{object} = $id;
+    $o->{objectnum} = $num;
+    $o->{title} //= [undef,$o->{object},undef,$o->{object}];
+    my $can = !defined $o->{title} ? 0
+            : $id =~ /^[vrpcsdugi]/ ? !$num
+            : $id =~ /^w/ ? 1
+            : $id =~ /^t/ ? $num && !$o->{hidden} : 0;
+    $can && $o
+}
+
+
+sub obj_ {
+    my($o) = @_;
+    my $lnk = $o->{object} . ($o->{objectnum} ? ".$o->{objectnum}" : '');
+    if($o->{object} =~ /^(?:$RE{wid}|$RE{tid})$/ && $o->{objectnum}) {
+        txt_ 'Comment ';
+        a_ href => "/$lnk", "#$o->{objectnum}";
+        txt_ ' on ';
+        a_ href => "/$lnk", $o->{title} ? tattr $o : '<deleted>';
+        txt_ ' by ';
+        user_ $o;
+
+    } else {
+        txt_ $OBJ{substr $o->{object}, 0, 1};
+        txt_ ': ';
+        a_ href => "/$lnk", tattr $o;
+        if($o->{user_name}) {
+            txt_ ' by ';
+            user_ $o;
+        }
+    }
+}
+
+
+sub can_report {
+    return !global_settings->{lockdown_anonreport} if !auth;
+    return auth->permEdit || auth->permBoard;
+}
+
+sub is_throttled {
+    fu->SQL("SELECT COUNT(*) FROM reports WHERE date > NOW()-'1 day'::interval AND", auth ? ('uid =', auth->uid) : ('(ip).ip =', fu->ip))->val >= $reportsperday
+}
+
+
+my $FORM = form_compile {
+    object   => {},
+    objectnum=> { default => undef, uint => 1 },
+    title    => {},
+    reason   => { maxlength => 50 },
+    message  => { default => '', maxlength => 50000 },
+    loggedin => { anybool => 1 },
+};
+
+js_api Report => $FORM, sub($data) {
+    fu->denied if is_throttled || !can_report;
+    my $obj = obj $data->{object}, $data->{objectnum};
+    return 'Invalid object' if !$obj;
+
+    fu->SQL('INSERT INTO reports', VALUES {
+        uid      => auth->uid,
+        ip       => auth ? undef : ipinfo(),
+        object   => $data->{object},
+        objectnum=> $data->{objectnum},
+        reason   => $data->{reason},
+        message  => $data->{message},
+    })->exec;
+    +{}
+};
+
+
+FU::get qr{/report/([vrpcsdgitwu]$RE{num})(?:\.($RE{num}))?}, sub($id,$num=undef) {
+    my $obj = obj $id, $num;
+    fu->notfound if !$obj || config->{read_only};
+
+    framework_ title => 'Submit report', sub {
+        if(is_throttled) {
+            article_ sub {
+                h1_ 'Submit report';
+                p_ "Sorry, you can only submit $reportsperday reports per day. If you wish to report more, you can do so by sending an email to ".config->{admin_email}
+            }
+        } elsif (!can_report) {
+            article_ sub {
+                h1_ 'Submit report';
+                p_ "Sorry, the report form is current disabled. Feel free to send an email to ".config->{admin_email}." instead.";
+            }
+        } else {
+            my $title = fragment sub { obj_ $obj };
+            utf8::decode($title);
+            div_ widget(Report => $FORM, { $FORM->empty->%*, %$obj, loggedin => !!auth, title => $title }), '';
+        }
+    };
+};
+
+
+sub report_ {
+    my($r, $url) = @_;
+    my $objid = $r->{object}.(defined $r->{objectnum} ? ".$r->{objectnum}" : '');
+    td_ style => 'padding: 3px 5px 5px 20px', sub {
+        a_ href => "?id=$r->{id}", "#$r->{id}";
+        small_ ' '.fmtdate $r->{date}, 'full';
+        txt_ ' by ';
+        if($r->{uid}) {
+            a_ href => "/$r->{uid}", $r->{username};
+            txt_ ' (';
+            a_ href => "/t/$r->{uid}/new?title=Regarding your report on $objid&priv=1", 'pm';
+            txt_ ')';
+        } else {
+            txt_ $r->{ip}||'[anonymous]';
+        }
+        br_;
+        obj_ $r;
+        txt_ ' ('; a_ href => "?obj=$r->{object}", 'all'; txt_ ')';
+        br_;
+        if($r->{message} && $r->{reason} =~ /spoilers/i) {
+            details_ sub {
+                summary_ $r->{reason};
+                div_ class => 'quote', sub { lit_ bb_format $r->{message} };
+            };
+        } else {
+            txt_ $r->{reason};
+            div_ class => 'quote', sub { lit_ bb_format $r->{message} } if $r->{message};
+        }
+    };
+    td_ style => 'width: 300px', sub {
+        form_ method => 'post', action => '/report/edit', sub {
+            input_ type => 'hidden', name => 'id', value => $r->{id};
+            input_ type => 'hidden', name => 'url', value => $url;
+            textarea_ name => 'comment', rows => 2, cols => 25, style => 'width: 290px', placeholder => 'Mod comment... (optional)', '';
+            br_;
+            input_ type => 'submit', class => 'submit', value => 'Post';
+            txt_ ' & ';
+            input_ type => 'submit', class => 'submit', name => 'status', value => $_, $_ eq $r->{status} ? (style => 'font-weight: bold') : () for @STATUS;
+        };
+    };
+    td_ sub {
+        lit_ bb_format $r->{log};
+        my $status = $r->{log} =~ /$STATUSRE -> ($STATUSRE).*$/ ? $1 : 'new';
+        for ($r->{elog}->@*) {
+            txt_ fmtdate $_->{date}, 'full';
+            small_ ' <';
+            user_ $_;
+            small_ '> ';
+            em_ "$status -> $_->{status}. " if $status ne $_->{status};
+            $status = $_->{status};
+            lit_ bb_format $_->{message};
+            br_;
+        }
+    };
+}
+
+
+FU::get '/report/list', sub {
+    fu->denied if !auth->isMod;
+
+    my $opt = fu->query(
+        p      => { upage => 1 },
+        s      => { default => 'id', enum => ['id','lastmod'] },
+        status => { default => undef, enum => \@STATUS},
+        id     => { default => undef, id => 1 },
+        obj    => { default => undef, vndbid => [keys %OBJ] },
+    );
+
+    my $where = AND
+        $opt->{id} ? SQL 'r.id =', $opt->{id} : (),
+        $opt->{status} ? SQL 'r.status =', $opt->{status} : (),
+        $opt->{obj} ? SQL 'r.object =', $opt->{obj} : (),
+        $opt->{s} eq 'lastmod' ? 'r.lastmod IS NOT NULL' : ();
+
+    my $cnt = fu->SQL('SELECT count(*) FROM reports r WHERE', $where)->val;
+    my $lst = fu->SQL(
+       'SELECT r.id, r.date, r.uid, ur.username, fmtip(r.ip) as ip, r.reason, r.status, r.message, r.log
+             , r.object, r.objectnum, x.title, x.uid as by_uid,', USER('uo'), '
+          FROM reports r
+          LEFT JOIN', ITEM_INFO('r.object', 'r.objectnum'), 'x ON true
+          LEFT JOIN users ur ON ur.id = r.uid
+          LEFT JOIN users uo ON uo.id = x.uid
+         WHERE', $where, '
+         ORDER BY', RAW({id => 'r.id DESC', lastmod => 'r.lastmod DESC'}->{$opt->{s}}),
+         LIMIT => 25, OFFSET => 25*($opt->{p}-1),
+    )->allh;
+    fu->enrich(aoh => elog => sub { SQL '
+        SELECT l.id, l.status, l.message, l.date, ', USER, '
+          FROM reports_log l
+          LEFT JOIN users u ON u.id = l.uid
+         WHERE l.id', IN $_, '
+         ORDER BY l.date'
+    }, $lst);
+
+    fu->sql(
+        'UPDATE users_prefs SET last_reports = NOW()
+          WHERE (last_reports IS NULL OR EXISTS(SELECT 1 FROM reports WHERE lastmod > last_reports OR date > last_reports))
+            AND id = $1', auth->uid
+    )->exec;
+
+    my sub url { '?'.query_encode({%$opt, @_}) }
+
+    framework_ title => 'Reports', sub {
+        article_ sub {
+            h1_ 'Reports';
+            p_  'Welcome to the super advanced reports handling interface. Reports can have the following statuses:';
+            ul_ sub {
+                li_ 'New: Default status for newly submitted reports';
+                li_ 'Busy: You can use this state to indicate that you\'re working on it.';
+                li_ 'Done: Report handled.';
+                li_ 'Dismissed: Report ignored.';
+            };
+            p_ q{
+              There's no flowchart you have to follow, if you can quickly handle a report you can go directly from 'New' to 'Done' or 'Dismissed'.
+              If you want to bring an older report to other's attention you can go back from any existing state to 'New'.
+            };
+            p_ q{
+              Feel free to skip over reports that you can't or don't want to handle, someone else will eventually pick it up.
+            };
+            p_ q{
+              Changing the status and/or adding a comment will add an entry to the log, so other mods can see what is going on. Everything on this page is only visible to moderators.
+            };
+            p_ q{
+              BUG: Deleting the last post from a thread (not "hiding", but actually deleting it) will cause the report
+              to refer to an innocent post when someone adds a new post to that thread, as the reply will get the same number as the deleted post.
+              Not a huge problem, but something to be aware of when browsing through handled reports.
+            };
+            br_;
+            br_;
+            p_ class => 'browseopts', sub {
+                a_ href => url(p => undef, status => undef), !$opt->{status} ? (class => 'optselected') : (), 'All';
+                a_ href => url(p => undef, status => $_), $opt->{status} && $opt->{status} eq $_ ? (class => 'optselected') : (), ucfirst $_ for @STATUS;
+            };
+            p_ class => 'browseopts', sub {
+                txt_ 'Sort by ';
+                a_ href => url(p => undef, s => 'id'),      $opt->{s} eq 'id'      ? (class => 'optselected') : (), 'newest';
+                a_ href => url(p => undef, s => 'lastmod'), $opt->{s} eq 'lastmod' ? (class => 'optselected') : (), 'last updated';
+            };
+        };
+
+        paginate_ \&url, $opt->{p}, [$cnt, 25], 't';
+        article_ class => 'thread', sub {
+            table_ class => 'stripe', sub {
+                my $url = '/report/list'.url;
+                tr_ sub { report_ $_, $url } for @$lst;
+                tr_ sub { td_ style => 'text-align: center', 'Nothing to report! (heh)' } if !@$lst;
+            };
+        };
+        paginate_ \&url, $opt->{p}, [$cnt, 25], 'b';
+    };
+};
+
+
+FU::post '/report/edit', sub {
+    fu->denied if !auth->isMod;
+    my $frm = fu->formdata(
+        id      => { id => 1 },
+        url     => { regex => qr{^/report/list} },
+        status  => { enum => \@STATUS, default => undef },
+        comment => { default => '' },
+    );
+    my $oldstatus = fu->sql('SELECT status FROM reports WHERE id = $1', $frm->{id})->val;
+    fu->notfound if !$oldstatus;
+
+    if(($frm->{status} && $oldstatus ne $frm->{status}) || length $frm->{comment}) {
+        fu->SQL('UPDATE reports SET lastmod = NOW()', $frm->{status} ? (', status =', $frm->{status}) : (), 'WHERE id =', $frm->{id})->exec;
+        fu->SQL('INSERT INTO reports_log', VALUES {
+            id => $frm->{id}, uid => auth->uid,
+            status => $frm->{status}//$oldstatus, message => $frm->{comment}
+        })->exec;
+    }
+    fu->redirect(tempget => $frm->{url});
+};
+
+1;

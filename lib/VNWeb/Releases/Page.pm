@@ -1,0 +1,379 @@
+package VNWeb::Releases::Page;
+
+use VNWeb::Prelude;
+use VNWeb::Images::Lib;
+use VNWeb::Releases::Lib;
+use FU::Util 'uri_escape';
+
+
+sub enrich_item($r,@) {
+    fu->enrich(aoh => 'lang', key => 'rid', sub { SQL('SELECT id, lang, mtl FROM releases_titles WHERE id', IN $_, 'ORDER BY lang') }, $r->{supersedes});
+    enrich_image_obj img => $r->{images};
+
+    $r->{engine}    &&= fu->sql('SELECT name FROM engines WHERE id = $1', $r->{engine})->val;
+    $r->{titles}    = [ sort { ($b->{lang} eq $r->{olang}) cmp ($a->{lang} eq $r->{olang}) || ($a->{mtl}?1:0) <=> ($b->{mtl}?1:0) || $a->{lang} cmp $b->{lang} } $r->{titles}->@* ];
+    $r->{platforms} = [ map $_->{platform}, $r->{platforms}->@* ];
+    $r->{resolution} = resolution $r;
+}
+
+
+sub _supersedes_($r) {
+    rdate_ $r->{released}; txt_ ' ';
+    abbr_ class => "icon-lang-$_->{lang}".($_->{mtl}?' mtl':''), title => $LANGUAGE{$_->{lang}}{txt}, '' for $r->{lang}->@*;
+    txt_ ' ';
+    a_ href => "/$r->{rid}", tattr $r;
+    small_ " ($r->{rid})";
+}
+
+
+sub _rev_ {
+    my($r) = @_;
+    # The old ani_* fields are automatically inferred from the new ani_* fields
+    # for edits made after the fields were introduced. Hide the old fields for
+    # such revisions to remove some clutter.
+    my $newani = $r->{chid} > 1110896;
+    revision_ $r, \&enrich_item,
+        [ vn         => 'Relations',       fmt => sub {
+            abbr_ class => "icon-rt$_->{rtype}", title => $_->{rtype}, ' ';
+            a_ href => "/$_->{vid}", tattr $_;
+            txt_ " ($_->{rtype})" if $_->{rtype} ne 'complete';
+            b_ ' (deleted)' if $_->{hidden};
+        } ],
+        [ official   => 'Official',        fmt => 'bool' ],
+        [ patch      => 'Patch',           fmt => 'bool' ],
+        [ freeware   => 'Freeware',        fmt => 'bool' ],
+        [ has_ero    => 'Has ero',         fmt => 'bool' ],
+        [ doujin     => 'Doujin',          fmt => 'bool' ],
+        [ uncensored => 'Uncensored',      fmt => 'bool' ],
+        [ gtin       => 'JAN/EAN/UPC/ISBN',empty => 0 ],
+        [ catalog    => 'Catalog number' ],
+        [ titles     => 'Languages',       txt => sub {
+            '['.$_->{lang}.($_->{mtl} ? ' machine translation' : '').'] '.($_->{title}//'').(length $_->{latin} ? " / $_->{latin}" : '')
+        }],
+        [ olang      => 'Main title',      fmt => \%LANGUAGE ],
+        [ released   => 'Release date',    fmt => sub { rdate_ $_ } ],
+        [ minage     => 'Age rating',      fmt => sub { txt_ minage $_ } ],
+        [ notes      => 'Notes' ],
+        [ platforms  => 'Platforms',       fmt => \%PLATFORM ],
+        [ media      => 'Media',           fmt => sub { txt_ fmtmedia $_->{medium}, $_->{qty}; } ],
+        [ resolution => 'Resolution'     ],
+        [ voiced     => 'Voiced',          fmt => \%VOICED ],
+        $newani ? () :
+        [ ani_story    => 'Story animation',     fmt => \%ANIMATED ],
+        [ ani_story_sp => 'Story animation/sprites',fmt => sub { txt_ fmtanimation $_, 'sprites' } ],
+        [ ani_story_cg => 'Story animation/cg',  fmt => sub { txt_ fmtanimation $_, 'CGs' } ],
+        [ ani_cutscene => 'Cutscene animation',  fmt => sub { txt_ fmtanimation $_, 'cutscenes' } ],
+        $newani ? () :
+        [ ani_ero    => 'Ero animation',       fmt => \%ANIMATED ],
+        [ ani_ero_sp => 'Ero animation/sprites',fmt=> sub { txt_ fmtanimation $_, 'sprites' } ],
+        [ ani_ero_cg => 'Ero animation/cg',    fmt => sub { txt_ fmtanimation $_, 'CGs' } ],
+        [ ani_face   => 'Lip/eye animation',   fmt => 'bool' ],
+        [ ani_bg     => 'Background effects',  fmt => 'bool' ],
+        [ engine     => 'Engine',              fmt => sub { a_ href => '/r/engines?m='.uri_escape($_), $_ } ],
+        [ producers  => 'Producers',       fmt => sub {
+            a_ href => "/$_->{pid}", tattr $_;
+            txt_ ' (';
+            txt_ join ', ', $_->{developer} ? 'developer' : (), $_->{publisher} ? 'publisher' : ();
+            txt_ ')';
+        } ],
+        [ drm        => 'DRM', fmt => sub {
+            a_ href => '/r/drm?m='.uri_escape($_->{name}), $_->{name};
+            txt_ " ($_->{notes})" if length $_->{notes};
+        } ],
+        [ images     => 'Images', fmt => sub {
+            my $rev = $_[0]{chid} == $r->{chid} ? 'new' : 'old';
+            a_ imgiv($_->{img}, $rev), $_->{img}{id};
+            txt_ " [$_->{img}{width}x$_->{img}{height}; ";
+            a_ href => "/$_->{img}{id}", image_flagging_display $_->{img} if auth;
+            span_ image_flagging_display $_->{img} if !auth;
+            txt_ "] $RELEASE_IMAGE_TYPE{$_->{itype}}{txt}";
+            if ($_->{vid}) {
+                small_ ' [';
+                a_ href => "/$_->{vid}", $_->{vid};
+                small_ ']';
+            }
+            txt_ ' ['.join(',', $_->{lang}->@*).']' if $_->{lang};
+            txt_ ' (photo)' if $_->{photo};
+        } ],
+        [ supersedes => 'Supersedes', fmt => sub { _supersedes_ $_ } ],
+        $VNDB::ExtLinks::REVISION
+}
+
+
+sub _infotable_animation_ {
+    my($r) = @_;
+    state @fields = qw|ani_story_sp ani_story_cg ani_cutscene ani_ero_sp ani_ero_cg ani_bg ani_face|;
+
+    return if !$r->{ani_story} && !$r->{ani_ero};
+
+    my sub txtc {
+        my($bool, $txt) = @_;
+        +(sub { $bool ? txt_ $txt : small_ $txt })
+    }
+
+    my sub sect {
+        my($val, $lbl) = @_;
+        defined $val ? txtc $val > 2, fmtanimation $val, $lbl : ();
+    }
+
+    my @story = !$r->{ani_story} ? () :
+        defined $r->{ani_story_sp} || defined $r->{ani_story_cg} || defined $r->{ani_cutscene} || defined $r->{ani_bg} || defined $r->{ani_face} ? (
+            defined $r->{ani_story_sp} ? sect $r->{ani_story_sp}, 'sprites' : (),
+            defined $r->{ani_story_cg} ? sect $r->{ani_story_cg}, 'CGs' : (),
+            defined $r->{ani_cutscene} ? sect $r->{ani_cutscene}, 'cutscenes' : (),
+        ) : txtc $r->{ani_story} > 1, $ANIMATED{$r->{ani_story}}{txt};
+
+    my @ero = !$r->{ani_ero} ? () :
+        defined $r->{ani_ero_sp} || defined $r->{ani_ero_cg} ? (
+            defined $r->{ani_ero_sp} ? sect $r->{ani_ero_sp}, 'sprites' : (),
+            defined $r->{ani_ero_cg} ? sect $r->{ani_ero_cg}, 'CGs' : (),
+        ) : txtc $r->{ani_ero} > 1, $ANIMATED{$r->{ani_ero}}{txt};
+
+    tr_ sub {
+        td_ 'Animation';
+        td_ sub {
+            dl_ sub {
+                if(@story) {
+                    dt_ 'Story scenes';
+                    dd_ sub { join_ \&br_, sub { $_->() }, @story };
+                }
+                if(@ero) {
+                    dt_ 'Erotic scenes';
+                    dd_ sub { join_ \&br_, sub { $_->() }, @ero };
+                }
+            } if @story || @ero;
+            join_ \&br_, sub { $_->() },
+                defined $r->{ani_bg}   ? (txtc $r->{ani_bg},   $r->{ani_bg} ? 'Animated background effects' : 'No background effects') : (),
+                defined $r->{ani_face} ? (txtc $r->{ani_face}, $r->{ani_face} ? 'Lip and/or eye movement' : 'No facial animations') : ();
+        };
+    };
+}
+
+
+sub _infotable_ {
+    my($r) = @_;
+
+    table_ class => 'stripe', sub {
+        tr_ sub {
+            td_ class => 'key', 'Relation';
+            td_ sub {
+                join_ \&br_, sub {
+                    abbr_ class => "icon-rt$_->{rtype}", title => $_->{rtype}, ' ';
+                    a_ href => "/$_->{vid}", tattr $_;
+                    txt_ " ($_->{rtype})" if $_->{rtype} ne 'complete';
+                }, grep !$_->{hidden}, $r->{vn}->@*
+            }
+        };
+
+        tr_ class => 'titles', sub {
+            td_ $r->{titles}->@* == 1 ? 'Title' : 'Titles';
+            td_ sub {
+                table_ sub {
+                    my($olang) = grep $_->{lang} eq $r->{olang}, $r->{titles}->@*;
+                    tr_ class => 'nostripe title', sub {
+                        td_ style => 'white-space: nowrap', sub {
+                            abbr_ class => "icon-lang-$_->{lang}", title => $LANGUAGE{$_->{lang}}{txt}, '';
+                        };
+                        td_ sub {
+                            my $title = $_->{title}//$olang->{title};
+                            span_ tlang($_->{lang}, $title), $title;
+                            small_ ' (machine translation)' if $_->{mtl};
+                            my $latin = defined $_->{title} ? $_->{latin} : $olang->{latin};
+                            if(defined $latin) {
+                                br_;
+                                txt_ $latin;
+                            }
+                        }
+                    } for $r->{titles}->@*;
+                };
+            };
+        };
+
+        tr_ sub {
+            td_ 'Type';
+            td_ !$r->{official} && $r->{patch} ? 'Unofficial patch' :
+                !$r->{official} ? 'Unofficial' : 'Patch';
+        } if !$r->{official} || $r->{patch};
+
+        tr_ sub {
+            td_ 'Publication';
+            td_ $r->{freeware} ? 'Freeware' : 'Non-free';
+        };
+
+        tr_ sub {
+            td_ 'Platform'.($r->{platforms}->@* == 1 ? '' : 's');
+            td_ sub {
+                join_ \&br_, sub {
+                    platform_ $_;
+                    txt_ ' '.$PLATFORM{$_};
+                }, $r->{platforms}->@*;
+            }
+        } if $r->{platforms}->@*;
+
+        tr_ sub {
+            td_ $r->{media}->@* == 1 ? 'Medium' : 'Media';
+            td_ sub {
+                join_ \&br_, sub { txt_ fmtmedia $_->{medium}, $_->{qty} }, $r->{media}->@*;
+            }
+        } if $r->{media}->@*;
+
+        tr_ sub {
+            td_ 'Resolution';
+            td_ resolution $r;
+        } if $r->{reso_y};
+
+        tr_ sub {
+            td_ 'Voiced';
+            td_ $VOICED{$r->{voiced}}{txt};
+        } if $r->{voiced};
+
+        _infotable_animation_ $r;
+
+        tr_ sub {
+            td_ 'Engine';
+            td_ sub {
+                a_ href => '/r/engines?m='.uri_escape($r->{engine}), $r->{engine};
+            }
+        } if length $r->{engine};
+
+        tr_ sub {
+            td_ 'DRM';
+            td_ sub { join_ \&br_, sub {
+                my $d = $_;
+                my @prop = grep $d->{$_}, keys %DRM_PROPERTY;
+                abbr_ class => "icon-drm-$_", title => $DRM_PROPERTY{$_}, '' for @prop;
+                abbr_ class => 'icon-drm-free', title => 'DRM-free', '' if !@prop;
+                a_ href => '/r/drm?m='.uri_escape($d->{name}), $d->{name};
+                lit_ ' ('.bb_format($d->{notes}, inline => 1).')' if length $d->{notes};
+            }, $r->{drm}->@* };
+        } if $r->{drm}->@*;
+
+        tr_ sub {
+            td_ 'Released';
+            td_ sub { rdate_ $r->{released} };
+        };
+
+        tr_ sub {
+            td_ 'Age rating';
+            td_ minage $r->{minage};
+        } if defined $r->{minage};
+
+        tr_ sub {
+            td_ 'Erotic content';
+            td_ $r->{uncensored} ? 'Contains uncensored erotic scenes' : defined $r->{uncensored} ? 'Contains erotic scenes with optical censoring' : 'Contains erotic scenes',
+        } if $r->{has_ero};
+
+        for my $t (qw|developer publisher|) {
+            my @prod = grep $_->{$t}, @{$r->{producers}};
+            tr_ sub {
+                td_ ucfirst($t).(@prod == 1 ? '' : 's');
+                td_ sub {
+                    join_ \&br_, sub {
+                        a_ href => "/$_->{pid}", tattr $_;
+                    }, @prod
+                }
+            } if @prod;
+        }
+
+        tr_ sub {
+            td_ gtintype($r->{gtin}) || 'GTIN';
+            td_ $r->{gtin};
+        } if $r->{gtin};
+
+        tr_ sub {
+            td_ 'Catalog no.';
+            td_ $r->{catalog};
+        } if $r->{catalog};
+
+        my @sup = grep !$_->{hidden}, $r->{supersedes}->@*;
+        tr_ sub {
+            td_ 'Supersedes';
+            td_ sub {
+                join_ \&br_, sub { _supersedes_ $_ }, @sup;
+            }
+        } if @sup;
+
+        my $sed = fu->SQL('
+            SELECT r.id AS rid, r.title, r.released
+              FROM', RELEASEST, 'r
+              JOIN releases_supersedes rs ON rs.id = r.id
+             WHERE NOT r.hidden AND rs.rid =', $r->{id}, '
+             ORDER BY r.released, r.sorttitle
+        ')->allh;
+        fu->enrich(aoh => 'lang', key => 'rid', sub { SQL('SELECT id, lang, mtl FROM releases_titles WHERE id', IN $_, 'ORDER BY lang') }, $sed);
+
+        tr_ sub {
+            td_ 'Superseded by';
+            td_ sub {
+                join_ \&br_, sub { _supersedes_ $_ }, @$sed;
+            }
+        } if @$sed;
+
+        tr_ sub {
+            td_ 'Links';
+            td_ sub {
+                if ($r->{patch} || $r->{official} || !grep $_->{mtl}, $r->{titles}->@*) {
+                    join_ ', ', sub {
+                        a_ href => $_->{url2}, $_->{label};
+                        vislink_ $_;
+                    }, $r->{vislinks}->@*;
+                } else {
+                    small_ 'piracy link hidden';
+                }
+            }
+        } if $r->{vislinks}->@*;
+
+        tr_ sub {
+            my $d = fu->SQL('SELECT status FROM rlists', WHERE { rid => $r->{id}, uid => auth->uid })->val;
+            td_ 'User options';
+            td_ class => 'compact', widget(UListRelease => { id => $r->{id}, status => $d }), '';
+        } if auth;
+    }
+}
+
+
+sub _images_ {
+    my($r) = @_;
+
+    div_ class => 'relimg', sub {
+        div_ sub {
+            h3_ sub {
+                abbr_ class => "icon-lang-$_", title => $LANGUAGE{$_}{txt}, '' for $_->{lang} ? $_->{lang}->@* : ();
+                if ($_->{vid}) {
+                    small_ '[';
+                    a_ href => "/$_->{vid}", $_->{vid};
+                    small_ '] ';
+                }
+                txt_ $RELEASE_IMAGE_TYPE{$_->{itype}}{txt};
+            };
+            image_ $_->{img}, cat => 'cover', thumb => 1;
+        } for sort { $RELEASE_IMAGE_TYPE{$a->{itype}}{ord} <=> $RELEASE_IMAGE_TYPE{$b->{itype}}{ord} } $r->{images}->@*;
+    };
+}
+
+
+FU::get qr{/$RE{rrev}} => sub($id, $rev=0) {
+    my $r = db_entry $id, $rev or fu->notfound;
+
+    $r->{title} = titleprefs_obj $r->{olang}, $r->{titles};
+    enrich_item $r;
+    enrich_vislinks r => 0, $r;
+
+    framework_ title => $r->{title}[1], index => !$rev, dbobj => $r, hiddenmsg => 1, js => 1,
+        og => {
+            description => bb_format $r->{notes}, text => 1
+        },
+    sub {
+        _rev_ $r if $rev;
+        article_ class => 'release', sub {
+            itemmsg_ $r;
+            h1_ tlang($r->{title}[0], $r->{title}[1]), $r->{title}[1];
+            h2_ class => 'alttitle', tlang(@{$r->{title}}[2,3]), $r->{title}[3] if $r->{title}[3] && $r->{title}[3] ne $r->{title}[1];
+            _infotable_ $r;
+            div_ class => 'description', sub { lit_ bb_format $r->{notes} } if $r->{notes};
+            _images_ $r if $r->{images}->@*;
+        };
+    };
+};
+
+1;

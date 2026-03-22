@@ -1,0 +1,288 @@
+// @license magnet:?xt=urn:btih:0b31508aeb0634b347b8270c7bee4d411b5d4109&dn=agpl-3.0.txt AGPL-3.0-only
+// @source: https://code.blicky.net/yorhel/vndb/src/branch/master/js
+// SPDX-License-Identifier: AGPL-3.0-only
+"use strict";
+
+@include .gen/extlinks.js
+
+
+// This list is incomplete, just an assortment of names and titles found in the DB
+const _greek = '\u0370-\u03ff\u1f00-\u1fff';
+const _cyrillic = '\u0400-\u04ff';
+const _arabic = '\u0600-\u06ff';
+const _thai = '\u0e00-\u0e7f';
+const _hangul = '\u1100-\u11ff\uac00-\ud7af';
+const _canadian = '\u1400-\u167f'; // Unified Canadian Aboriginal Syllabics, we have an actual Inuktitut title in the database
+const _kana = '\u3040-\u3099\u30a1-\u30fa\uff66-\uffdc'; // Hiragana + Katakana + Half/Full-width forms
+const _cjk = '\u3100-\u5f60\u5f62-\u9fff\u{20000}-\u{323af}'; // Whole range of CJK blocks (excluding _special)
+const _special = '\u5f61'; // Characters sometimes used for styling, may or may not need romanization
+const mustRomanize = new RegExp('[' +                     _cyrillic + _arabic + _thai + _hangul + _canadian + _kana + _cjk + ']', 'u');
+const mayRomanize  = new RegExp('[' + _greek + _special + _cyrillic + _arabic + _thai + _hangul + _canadian + _kana + _cjk + ']', 'u');
+
+
+const imageAccept = '.jpg,.jpeg,.png,.webp,.avif,.jxl,image/jpeg,image/png,image/webp,image/avif,image/jxl';
+const imageFormats = 'Supported file types: JPEG, PNG, WebP, AVIF or JXL, at most 10 MiB.';
+
+const imagePattern = t => '^(?:.+/)?(?:' + t + '([0-9]+)|' + t + '/[0-9][0-9]/([0-9]+)\.jpg).*';
+const imagePatternId = (t,v) => t + v.match(new RegExp(imagePattern(t))).filter(x => x !== undefined)[1];
+
+const spoilLevels = [
+    [0, 'No spoiler'],
+    [1, 'Minor spoiler'],
+    [2, 'Major spoiler'],
+];
+
+
+const imgsize = (img, w, h) => {
+    if (img.width <= w && img.height <= h)
+        return { width: img.width, height: img.height };
+    if (img.width/img.height > w/h)
+        return { width: w, height: Math.round(img.height * (w/img.width)) };
+    return { height: h, width: Math.round(img.width * (h/img.height)) };
+};
+
+
+// Edit summary & submit button box for DB entry edit forms.
+// Attrs:
+// - data     -> form data containing editsum, hidden & locked
+// - api      -> Api object for loading & error status
+// - type     -> vndbid type
+const EditSum = vnode => {
+    let {api,data,type} = vnode.attrs;
+    const rad = (l,h,lab) => m('label',
+        m('input[type=radio]', {
+            checked: l === data.locked && h === data.hidden,
+            oninput: () => { data.locked = l; data.hidden = h }
+        }), lab
+    );
+    const approval = type === 'g' || type === 'i';
+    const mod = 'authmod' in data ? data.authmod : pageVars.dbmod;
+    const view = () => m('article.submit',
+        mod ? m('fieldset',
+            rad(false, false, ' Normal '),
+            rad(true , false, ' Locked '),
+            rad(true , true , ' Deleted '),
+            approval ? rad(false, true, ' Awaiting approval ') : null,
+            data.locked && data.hidden ? m('span',
+                m('br'), 'Note: edit summary of the last edit should indicate the reason for the deletion.', m('br')
+            ) : null,
+        ) : null,
+        m(TextPreview, {
+            data, field: 'editsum',
+            attrs: {
+                rows: 4, cols: 50, minlength: 2, maxlength: 5000, required: true,
+                invalid: /^[!@#$%^&\*\(\)\-_=\+\[\];:'",<.>/\?\\\|]+$/.test(data.editsum) ? "Please type something meaningful!" : null,
+            },
+            header: [
+                data.id ? 'What did you change and why? Which source(s) did you use? Links are always welcome!'
+                : type === 'v' ? [ 'Which source(s) did you use? Does the visual novel match our ', m('a[href=/d2#1][target=_blank]', 'inclusion criteria'), '?' ]
+                : type === 'p' ? 'For which visual novel(s) are you adding this producer entry? Which source(s) did you use?'
+                : type === 's' ? 'For which visual novel(s) are you adding this staff entry? Which source(s) did you use?'
+                : type === 'c' ? 'What source did you use for information about this character?'
+                : type === 'r' ? 'What source did you use for information about this release?'
+                : type === 'g' ? 'Why should this tag be included in the database?'
+                : type === 'i' ? 'Why should this trait be included in the database?'
+                : null,
+            ]
+        }),
+        api.error === 'maxrev' ? m('div.warning',
+            m('h2', 'Edit conflict'),
+            m('p',
+                'Someone has made an edit to this entry while you had this form open in your browser.',
+                ' Please check the ', m('a', { href: '/'+data.id+'/hist' }, 'edit history'), ' to see what has been changed.',
+                m('br'), m('br'),
+                m('input[type=button][value=Reload this form with the latest revision]', { onclick: () => location.reload() }),
+                ' (your changes will be lost)',
+                m('br'), 'OR:', m('br'),
+                m('input[type=submit][value=Submit the form anyway and override the latest revision]', { onclick: ev => data.maxrev = null }),
+                ' (their changes will be lost)'
+            ),
+        ) : [
+            m('input[type=submit][value=Submit]'),
+            api.Status(),
+            api.error ? null : m('p.formerror', 'The form contains errors')
+        ]
+    );
+    return {view};
+};
+
+
+
+const ExtLinks = initVnode => {
+    const links = initVnode.attrs.links;
+    const extlinks = vndbTypes.extLinks.flatMap(
+        ([site,ent,label],i) => ent.toLowerCase().includes(initVnode.attrs.type) ? [{
+            site, label,
+            multi: ent.includes(initVnode.attrs.type.toUpperCase()),
+            patt: extLinksPatt[i],
+        }] : []);
+    const extlinksMap = Object.fromEntries(extlinks.map(x => [x.site,x]));
+
+    const parsed = new Map();
+    let inp = {str: '', api: new Api('ExtlinkParse')};
+    let web = {str: (l => l ? l.value : '')(links.find(l => l.site === 'website')), api: new Api('ExtlinkParse')};
+
+    const isdup = o => o.parsed && links.find(l => l.site === o.parsed.site && l.value === o.parsed.value);
+
+    const add = (o,p,force) => {
+        if (p && !extlinksMap[p.site]) p = null;
+        o.parsed = p;
+        o.lnk = p ? extlinks.find(e => e.site === p.site) : null;
+        if (!p) {
+            if (o === web) links.push({ site: 'website', value: o.str });
+            return;
+        }
+        if (isdup(o)) return;
+        const dupsite = links.find(l => l.site === o.lnk.site);
+        if (!o.lnk.multi && !force && dupsite) return;
+        if (o.lnk.multi || !dupsite) links.push({...p, _new: true });
+        else links.forEach(l => { if(l.site === p.site) { delete l._del; Object.assign(l, p) } });
+        o.str = '';
+        o.parsed = o.lnk = null;
+    };
+
+    const set = (o,v) => {
+        o.str = v.trim();
+        o.parsed = o.lnk = null;
+        o.api.abort();
+        if (o.str.length === 0) {}
+        else if (parsed.has(v)) add(o, parsed.get(v));
+        else o.api.call({url: v}, ({res}) => {
+            parsed.set(v, res);
+            add(o, res);
+        });
+    };
+
+    const Msg = (o,isinp) =>
+        o.api.loading() || o.api.error ? o.api.Status() :
+        isinp && o.str.length > 0 && !o.parsed ? [ m('p', ('small', '>>> '), m('b.invalid', 'Invalid or unrecognized URL.')) ] :
+        isdup(o) ? [ m('p', m('small', '>>> '), m('b.invalid', ' URL already listed.')) ] :
+        o.parsed ? [
+            m('p', m('input[type=button][value=Update]', { onclick: () => add(o, o.parsed, true) }), m('span.invalid', ' URL recognized as: ', o.lnk.label)),
+            m('p.invalid', 'Did you mean to update the URL?'),
+        ] : null;
+
+    const Website = () => extlinksMap.website ? m('fieldset',
+        m('label[for=website]', 'Website'),
+        m(Input, { id: 'website', class: 'xw', type: 'weburl', data: web, field: 'str', oninput: v => {
+            const l = links.find(l => l.site === 'website');
+            if(l) links.splice(links.indexOf(l), 1);
+            set(web,v);
+        }}),
+        Msg(web),
+    ) : null;
+
+    const view = () => [ Website(), m('fieldset',
+        m('label[for=extlinks]', 'External links', HelpButton('extlinks')),
+        m('table', links.filter(l => extlinksMap[l.site] && extlinksMap[l.site].patt).flatMap(l =>
+            [ m('tr', {key: 'l-'+l.site+'-'+l.value},
+                m('td', m(Button.Del, {onclick: () => {
+                    if (l._new || initVnode.attrs.type != 'r') links.splice(links.indexOf(l), 1);
+                    else l._del = !l._del;
+                }})),
+                m('td', m('a[target=_blank]', { href: l.split.join('') }, extlinksMap[l.site].label)),
+                m('td', l.split.map((p,i) => m(i % 2 ? 'span' : 'small', p))),
+            ) ].concat( !l._del ? [] : [ m('tr', {key: 'd-'+l.site+'-'+l.value},
+                m('td'),
+                m('td', { colspan: 2 },
+                    'Do not delete dead links! Replace with a working link if one is available, otherwise keep it as is.', m('br'),
+                    'Only remove links if they have been transferred to a different release or if they never represented this release in the first place.', m('br'),
+                    m('button[type=button]', { onclick: () => links.splice(links.indexOf(l), 1) }, 'Delete link'),
+                    m('button[type=button]', { onclick: () => delete l._del }, 'Keep link'),
+                ),
+            ) ])
+        )),
+        m('form', { onsubmit: ev => { ev.preventDefault(); add(inp, inp.parsed, true); } },
+            m('input#extlinks.xw[type=text][placeholder=Add URL...]', { value: inp.str, oninput: ev => set(inp, ev.target.value)}),
+            Msg(inp,1),
+        ),
+        Help('extlinks',
+            m('p', 'Links to external websites. The following sites and URL formats are supported:'),
+            m('dl', extlinks.filter(e => e.patt).flatMap(e => [
+                m('dt', e.label),
+                m('dd', e.patt.map((p,i) => m(i % 2 ? 'strong' : 'span', p))),
+            ])),
+            m('p', 'Links to sites that are not in the above list can still be added as notes or in the description field.'),
+        ),
+    )];
+    return {view};
+};
+
+
+
+const ImageFlag = initVnode => {
+    const img = initVnode.attrs.img;
+    const api = new Api('ImageVote');
+    const sex = ['Safe', 'Suggestive', 'Explicit'];
+    const vio = ['Tame', 'Violent', 'Brutal'];
+
+    let editing = img.token && img.votecount == 0;
+    let saved_sex = img.my_sexual;
+    let saved_vio = img.my_violence;
+    let timer = null;
+
+    const save = () => {
+        clearTimeout(timer);
+        timer = null;
+        if (saved_sex !== img.my_sexual || saved_vio !== img.my_violence) {
+            saved_sex = img.my_sexual;
+            saved_vio = img.my_violence;
+            api.call({votes: [img]}, d => Object.assign(img, d[0]));
+        }
+    };
+
+    const edit = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            if (img.my_sexual !== null && img.my_violence !== null) save();
+            m.redraw();
+        }, 1000);
+    };
+
+    const view = () => [
+        m('p',
+            api.loading() ? m('span.spinner')
+            : editing ? m(Button.Save, { onclick: () => {
+                if (img.my_sexual === null || img.my_violence === null)
+                    api.error = 'Please indicate both the sexual and violence ratings.';
+                else
+                    save(editing = false);
+              }})
+            : img.token ? m(Button.Edit, { onclick: () => editing = true }) : null,
+            ' ',
+            img.votecount === 0
+            ? m('span', 'Not yet flagged.')
+            : sex[img.sexual] + ' / ' + vio[img.violence] + ' (' + img.votecount + ' vote' + (img.votecount === 1 ? '' : 's') + ').'
+        ),
+        api.error ? m('p.standout', api.error) :
+        editing && img.votecount === 0 ? m('p.invalid', 'Please rate this image') : null,
+        !editing ? null : m('table[style=margin-left:30px]',
+            m('thead', m('tr',
+                m('td', 'Sexual'),
+                m('td', 'Violence'),
+            )), m('tbody', range(0, 2).map(i => m('tr',
+                m('td', m('label.check', m('input[type=radio]', { checked: img.my_sexual   === i, onclick: () => edit(img.my_sexual   = i) }), ' ', sex[i])),
+                m('td', m('label.check', m('input[type=radio]', { checked: img.my_violence === i, onclick: () => edit(img.my_violence = i) }), ' ', vio[i])),
+            )))
+        ),
+    ];
+    return {view};
+};
+
+
+
+@include ReleaseEdit.js
+@include VNEdit.js
+@include Tagmod.js
+@include DRMEdit.js
+@include EngineEdit.js
+@include ProducerEdit.js
+@include StaffEdit.js
+@include DocEdit.js
+@include CharEdit.js
+@include TagEdit.js
+@include TraitEdit.js
+@include ImageFlagging.js
+@include Report.js
+
+// @license-end

@@ -1,0 +1,27 @@
+/* Styles js/graph/vn.js */
+#vn-graph {
+    > div { /* options div */
+        width: 100%;
+        padding-top: 2px;
+        display: flex;
+        justify-content: space-between;
+        > small { font-size: 80% }
+    }
+    > svg { /* the graph */
+        width: 100%;
+        .edges line {
+            stroke-width: 5;
+            stroke: var(--grayedout);
+        }
+        .main circle { fill: var(--maintext) }
+        pattern circle { fill: var(--maintext) } /* No image */
+    }
+}
+.vn-rel-icon svg { width: 14px; height: 14px; margin-right: 5px }
+#vn-graph-arrow { stroke: var(--grayedout); fill: none; stroke-width: 2 }
+#vn-graph-sel {
+    width: 400px; height: 80px; padding-top: 50px;
+    display: flex; justify-content: center; align-items: flex-end;
+    > div { padding: 5px; background: var(--secbg) }
+    a { font-size: 18px; }
+}

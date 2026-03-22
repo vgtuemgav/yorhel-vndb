@@ -1,0 +1,1166 @@
+html         { box-sizing: border-box }
+*, *:before, *:after { box-sizing: inherit }
+*            { margin: 0; padding: 0; box-sizing: border-box; font: inherit; color: inherit; text-size-adjust: none; -webkit-text-size-adjust: none; -moz-text-size-adjust: none }
+body         { font: 13px "Tahoma", "Arial", sans-serif; color: var(--maintext) }
+table        { border-collapse: collapse; }
+table td,
+table th     { vertical-align: top; padding: 3px; }
+img          { border: none; box-sizing: content-box }
+svg          { fill: currentColor; }
+b,strong,h1,h2,h3,h4,h5{ font-weight: bold }
+i,em         { font-style: italic }
+summary      { cursor: pointer }
+
+a,
+.fake_link       { color: var(--link); text-decoration: none; cursor:pointer; border-bottom: 1px solid transparent }
+
+a:hover,
+.fake_link:hover { border-bottom: 1px dotted var(--maintext); }
+
+table tr.odd,
+table.stripe tbody tr:nth-child(odd):not(.nostripe),
+.docs table tbody tr:nth-child(odd) { background: var(--boxbg); }
+tr:target, tr.target { outline: 1px dashed var(--standout) }
+
+
+/* Warning/Notice Box */
+div.warning, div.notice       { margin: 5px 10%; padding: 15px; background-color: var(--warnbg); border: 1px solid var(--warnborder); text-align: left }
+div.notice                    { background-color: var(--noticebg); border: 1px solid var(--noticeborder); }
+div.warning ul, div.notice ul { margin-left: 0; }
+div.warning li, div.notice li { margin-left: 20px; }
+div.warning h2, div.notice h2 { font-size: inherit; margin: 0; }
+
+a.addnew, p.addnew   { float: right; margin: 0 }
+a.mainopts, p.mainopts { float: right; margin: 0 }
+p.mainopts a, p.mainopts label { margin: 0 5px }
+
+/* general text formatting */
+
+ul, ol        { margin-left: 35px; }
+p.itemmsg     { float: right; color: var(--standout); font-style: italic; margin: 0!important }
+small, .grayedout { color: var(--grayedout) }
+.underline    { text-decoration: underline }
+pre, .monospace    { font-family: monospace!important }
+p.description, div.description { margin: 10px auto!important; max-width: 800px; }
+.done         { color: var(--statok) }
+.todo         { color: var(--statnok) }
+p.center      { text-align: center; }
+b, .standout  { font-weight: normal; color: var(--standout)!important }
+.clearfloat   { clear: both; height: 0; }
+.hidden       { display: none!important }
+.invisible    { visibility: hidden }
+.linethrough  { text-decoration: line-through }
+.nowrap       { white-space: nowrap }
+.spoiler,         .spoiler       a { color: #000!important;            background-color: #000    }
+.spoiler:hover,   .spoiler:focus   { color: var(--maintext)!important; background-color: inherit }
+.spoiler:hover a, .spoiler:focus a { color: var(--link)!important;     background-color: inherit }
+.small        { font-size: 11px }
+main p        { margin: 3px 20px; }
+main div p,
+main fieldset p,
+main table p  { margin: 0; }
+
+
+.quote {
+  padding: 1px 5px;
+  margin: 0px 10px;
+  color: var(--grayedout);
+  border: none;
+  border-left: 1px dotted var(--border);
+  text-align: left;
+}
+pre {
+  padding:1px 5px;
+  margin: 5px 15px;
+  border: 1px dotted var(--border);
+  border-right: none;
+  border-left: 1px solid var(--border);
+  background: var(--boxbg);
+  overflow-x: auto;
+}
+
+
+
+
+@import "css/layout";
+@import "css/forms";
+@import "css/vngraph";
+@import "css/staffedit";
+@import "css/charedit";
+@import "css/tagmod";
+
+
+
+/***** Homepage ******/
+
+p.screenshots           { text-align: center; margin-top: 10px; padding: 0; height: 105px; overflow: hidden }
+p.screenshots img       { margin: 2px; }
+li.announcement         { margin-bottom: 3px; margin-top: 3px }
+li.announcement a       { font-weight: bold; font-size: 15px; color: var(--maintext) }
+
+.homepage { display: flex; flex-wrap: wrap; column-gap: 10px }
+.homepage article { flex: 1 1 0; min-width: 30%; padding: 0 2px 10px 2px; }
+@media (max-width: 1300px) { .homepage article { min-width: 45% } }
+@media (max-width:  900px) { .homepage article { min-width: 90% } }
+.homepage h1 { margin: 0 0 5px 0; font-size: 18px; font-weight: bold; color: var(--boxtitle) }
+.homepage h1 a { color: inherit; }
+.homepage h2 { margin-top: 3px; }
+.homepage ul { list-style-type: none; margin-left: 10px; }
+.homepage li { display: flex; line-height: 1.1 }
+.homepage li span { white-space: nowrap; padding-right: 4px; padding-bottom: 3px }
+.homepage li span:first-child { overflow: hidden; text-overflow: ellipsis }
+
+
+
+
+/***** Browsing ******/
+
+.browseopts a, .browseopts button {
+  padding: 1px 3px;
+  color: inherit;
+  border: 1px solid var(--border);
+  margin: 0 2px;
+  white-space: nowrap;
+}
+p.browseopts                    { text-align: center; padding: 2px; }
+span.browseopts                 { text-align: center; padding: 10px; display: inline-block }
+.browseopts .optselected,
+.browseopts a:hover,
+.browseopts button:hover        { border: 0; padding: 2px 4px; }
+.browse table td.tc1 { padding-left: 25px; }
+table thead td, table thead th  { font-weight: bold; background-color: var(--secbg); }
+table thead th                  { text-align: left }
+fieldset.search                 { display: block; width: 100%; text-align: center; margin: 0 0 10px 0; }
+fieldset.search .submit         { padding: 0 1px; }
+#searchtabs {
+  display: flex; align-items: flex-end; justify-content: center; padding-right: 70px;
+  a {
+    padding: 2px 6px 0px 6px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin: 0 2px;
+    color: inherit;
+  }
+  a:hover, a.sel {
+    border: 1px solid var(--secborder);
+    border-bottom: none;
+    background: var(--boxbg);
+  }
+}
+#q { width: 600px }
+#bq { width: 300px }
+
+
+
+/* history browser */
+
+.histoptions {
+    margin: 0 auto;
+    select { width: 150px }
+    select[name=t] { scrollbar-width: none }
+    select[name=t]::-webkit-scrollbar { display: none }
+}
+
+.history td       { white-space: nowrap; padding-left: 15px }
+.history td.tc1_0 { padding-right: 0; padding-left: 0 }
+.history td.tc1_0 a { color: inherit; display: inline-block; width: 15px; border-bottom: 0; text-align: center }
+.history td.tc1_1 { width: 70px; padding-right: 0; text-align: right }
+.history td.tc1_2 { width: 30px; padding-left: 0 }
+.history td.tc2   { width: 140px }
+.history td.tc4   { width: 100% }
+.history td.tc4 small { margin-left: 10px }
+.history td.newuser a { color: var(--statok) }
+
+
+
+
+/***** Discussions ******/
+
+/* threads page */
+.thread  { padding: 0; }
+.thread table         { width: 100%; table-layout: fixed }
+.thread tr:not(:last-child) td { border-bottom: 1px solid var(--border); }
+.thread td.tc1        { width: 190px; padding: 5px 10px; border-right: 1px solid var(--border); }
+.thread td.tc2        { padding: 10px 20px 10px 10px; }
+.thread tr.deleted td { padding: 1px 10px; }
+.thread .lastmod      { float: right; font-size: 11px; color: var(--grayedout); margin: 0 -10px -5px 0; }
+.thread .edit         { float: right; color: var(--grayedout); margin: -10px -10px 0 0; visibility: hidden }
+.thread td:hover .edit,
+.thread td:active .edit { visibility: visible }
+
+/* threads browser */
+.discussions td.tc4     { text-align: right; }
+.discussions a.locked   { text-decoration: line-through; }
+.discussions .boards    { padding-left: 10px }
+.discussions .boards a  { color: var(--grayedout) }
+.discussions td.tc2     { width: 66px; text-align: right }
+.discussions td.tc3     { width: 116px;  }
+.discussions td.tc4     { width: 256px; }
+.discussions .pollflag  { color: var(--grayedout); padding-right: 6px; }
+.boardsearchoptions {
+    margin: 0 auto;
+    td { padding: 10px }
+    select { width: 150px; scrollbar-width: none }
+    select::-webkit-scrollbar { display: none }
+}
+.postsearch td.tc1_1           { width: 60px; padding-left: 0; padding-right: 0; text-align: right }
+.postsearch td.tc1_2           { width: 25px; padding-left: 0 }
+.postsearch td.tc2             { width: 65px;  }
+.postsearch td.tc3             { width: 90px; }
+
+
+/***** Release listings on VN & producer pages */
+
+.releases { width: 100%; }
+.releases tr.vn > td   { background: var(--boxbg); font-weight: bold; }
+.releases tr.vn .ulist-widget-icon { padding-right: 10px }
+.releases td.tc1       { padding-left: 30px; width: 110px; white-space: nowrap }
+.releases td.tc2       { width: 46px; white-space: nowrap }
+.releases td.tc3       { text-align: right; padding: 0; width: 120px; }
+.releases td.tc_icons  { text-align: right; padding: 0 4px }
+.releases td.tc_prod   { color: var(--grayedout); white-space: nowrap; width: 56px }
+.releases td.tc_rlist  {
+    width: 76px; position: relative; text-align: right;
+    div {
+        width: 100%; cursor: pointer;
+        > span:not(.spinner) { visibility: hidden }
+        &:hover > span { visibility: visible }
+    }
+    ul { list-style-type: none; border: 1px solid var(--border); width: 100px; background: var(--secbg); position: absolute; top: 0; right: 70px; z-index: 100 }
+    li a { display: block; padding: 3px 5px; border: 0 }
+    li a:hover { background: var(--boxbg) }
+}
+.releases td.tc_links {
+    text-align: right; width: 35px; padding: 0; white-space: nowrap;
+    > div { display: none; position: relative }
+    &:hover > div { display: block }
+    ul { list-style-type: none; border: 1px solid var(--border); background: var(--secbg); position: absolute; top: -18px; right: 30px; z-index: 100 }
+    li a { display: block; padding: 3px 5px; border: 0 }
+    li a:hover { background: var(--boxbg) }
+    li span { color: var(--maintext); padding-right: 10px }
+}
+.releases tr.mtl a,
+.releases tr.mtl td { color: var(--grayedout) }
+.releaseero { cursor: default; color: transparent; opacity: 0.7 }
+.releaseero_no  { text-shadow: 0 0 var(--grayedout) }
+.releaseero_yes { text-shadow: 0 0 var(--maintext) }
+.releaseero_cen { text-shadow: 0 0 var(--statnok) }
+.releaseero_unc { text-shadow: 0 0 var(--statok) }
+
+
+
+.vnreleases details { margin: 7px 0 3px 0 }
+.vnreleases details[open] summary small { display: none }
+.vnreleases summary { background: var(--boxbg); font-weight: bold; width: 100% }
+.vnreleases summary.mtl { color: var(--grayedout); }
+
+/***** VN page *******/
+
+div.vndetails                 { margin: 0 auto; max-width: 820px; }
+div.vnimg                     { float: left; width: 250px; margin: 0 10px; text-align: center }
+div.vnimg p                   { text-align: center; padding: 0px; margin: 0; }
+div.vndetails h2              { margin: 5px 0 0 0; }
+.vndesc p                     { padding: 0 0 0 5px; }
+div.vndetails > table         { float: left; width: 100%; max-width: 500px; }
+div.vndetails td.key,
+div.vndetails > table > tbody > tr > td:first-child  { width: 96px; }
+div.vndetails > table dt      { float: left; font-style: italic; }
+div.vndetails > table dd      { margin-left: 90px; }
+div.vndetails td.titles div    { display: inline-block }
+div.vndetails td.titles summary table  { margin-top: -18px }
+div.vndetails td.titles table  { margin-left: 96px }
+div.vndetails tr.title td     { padding: 0 0px }
+div.vndetails td.relations dt { float: none; font-style: normal; }
+div.vndetails td.relations dd { margin-left: 15px; }
+div.vndetails td.relations label { float: right }
+div.vndetails td.relations input:not(:checked) ~ dl .unofficial { display: none }
+div.vndetails .mylengthvote   { float: right }
+#buynow .ad { float: right }
+div.vndetails td.anime span    { font-size: 10px; padding-right: 4px; }
+.ulistvn {
+    padding: 5px 0 0 0;
+    > strong { font-size: 14px }
+    > span { float: right; height: 26px }
+    td:last-child { padding-right: 0 }
+    table { width: 100%; clear: right }
+    .labels button, textarea { width: 100% }
+    .vote button { width: 80px }
+    .notes { position: relative }
+    .notes .spinner { position: absolute; right: 5px; top: 5px }
+}
+
+div#vntags                    { margin: 0 30px 0 30px; border-top: 1px solid var(--border); padding: 3px 5% 0 5%; text-align: center; }
+#vntags span                  { white-space: nowrap; margin-left: 15px; }
+#vntags small                 { font-size: 10px }
+#vntags .lieo                 { text-decoration: line-through }
+#tagops                       { text-align: right; width: auto; }
+
+#tagops label                 { margin: 0 0 0 10px;  border: 0; outline: none; color: var(--link); cursor: pointer; }
+#tagops label.sec             { border-left: 1px solid var(--border); padding-left: 10px }
+#tagops label.lst             { margin: 0 30px 0 10px; }
+#tagops input:checked + label { color: var(--maintext); }
+
+/* tag filter machinery; the order of declarations is important */
+
+#tag_spoil_all:checked ~ #vntags .cut2 { display: none; }
+#tag_spoil_some:checked ~ #vntags .cut1 { display: none; }
+#tag_spoil_none:checked ~ #vntags .cut0 { display: none; }
+
+#tag_toggle_all:checked ~ #vntags .cut { display: inline }
+
+#cat_cont:not(:checked) ~ #vntags .cat_cont { display: none; }
+#cat_tech:not(:checked) ~ #vntags .cat_tech { display: none; }
+#cat_ero:not(:checked) ~ #vntags .cat_ero   { display: none; }
+
+#tag_spoil_none:checked ~ #vntags .tagspl1  { display: none; }
+#tag_spoil_none:checked ~ #vntags .tagspl2  { display: none; }
+#tag_spoil_some:checked ~ #vntags .tagspl2  { display: none; }
+
+#tag_spoil_all:checked ~ #vntags .lie { text-decoration: line-through }
+
+/* end of tag filter machinery */
+
+#screenshots table     { width: 100%; }
+#screenshots tr.rel td { background: var(--boxbg); font-weight: bold; }
+
+#screenshots p.rel {
+  background: var(--boxbg);
+  margin: 0;
+  padding: 2px;
+  font-weight: bold;
+  text-align: center;
+}
+#screenshots a.scrlnk     { margin: 2px; border: none }
+#screenshots div.scr      { display: block; padding: 0 15px; text-align: center }
+#screenshots a img        { border: 3px solid transparent; }
+#screenshots a.nsfw img   { border: 3px solid var(--statnok); }
+#screenshots a:hover img  { border: 3px solid var(--border); }
+
+#scrhide_s0:checked ~ #screenshots label[for=scrhide_s0],
+#scrhide_s1:checked ~ #screenshots label[for=scrhide_s1],
+#scrhide_s2:checked ~ #screenshots label[for=scrhide_s2],
+#scrhide_v0:checked ~ #screenshots label[for=scrhide_v0],
+#scrhide_v1:checked ~ #screenshots label[for=scrhide_v1],
+#scrhide_v2:checked ~ #screenshots label[for=scrhide_v2] { color: var(--maintext) }
+
+#screenshots .scrlnk { display: none }
+#scrhide_s0:checked ~ #screenshots .scrlnk_s0 { display: inline }
+#scrhide_s1:checked ~ #screenshots .scrlnk_s1 { display: inline }
+#scrhide_s2:checked ~ #screenshots .scrlnk    { display: inline }
+#scrhide_v0:checked ~ #screenshots .scrlnk_v0 { display: none }
+#scrhide_v1:checked ~ #screenshots .scrlnk_v1 { display: none }
+
+.reviews {
+    display: flex; column-gap: 10px; flex-wrap: wrap;
+    > article {
+        flex: 1 1 0; flex-basis: 450px; padding: 0;
+        display: flex; flex-direction: column;
+        > div:nth-child(3) > span:first-child  { float: right; color: var(--grayedout); font-style: normal; margin: -5px 0 0 0; visibility: hidden }
+        > div:nth-child(3):hover  > span:first-child,
+        > div:nth-child(3):active > span:first-child { visibility: visible }
+        .review_spoil input:checked       ~ span { display: none }
+        .review_spoil input:not(:checked) ~ div  { display: none }
+        > div:first-child { padding: 3px 5px; display: flex; justify-content: space-between; background: var(--secbg); font-weight: bold }
+        > div:first-child > span:first-child { font-weight: bold }
+        > div:nth-child(2) { background: var(--secbg) }
+        > div:nth-child(2) p { padding: 2px; text-align: center }
+        > div:nth-child(3) { flex: 1; padding: 10px }
+        > div:last-child { padding: 2px 5px; display: flex; justify-content: space-between; background: var(--boxbg) }
+        .myvote { font-weight: bold; text-decoration: underline }
+    }
+}
+
+.quote-score {
+    white-space: nowrap;
+    a { border: 0!important; color: var(--grayedout) }
+    a:hover, a.active { color: var(--maintext) }
+    svg { width: 14px; height: 14px }
+}
+
+.browse.quotes {
+    .tc1, .tc2, .tc3 { white-space: nowrap }
+    .tc1 { width: 90px }
+    .tc2 { width: 130px }
+    .tc3 { width: 140px }
+    .setfil { font-size: 10px; padding-right: 3px }
+}
+
+
+/***** VN tags tab (/v+/tags) *******/
+
+.vntaglist { list-style-type: none; column-width: 400px }
+.vntaglist li.tagvnlist-top:not(:first-child) { margin-top: 30px }
+.vntaglist li.tagvnlist-parent { margin: 5px 0 3px 0 }
+.vntaglist li.tagvnlist-parent a:not(.grayedout) { color: var(--maintext); font-weight: bold }
+.vntaglist li.tagvnlist-inherited a { color: var(--grayedout) }
+.vntaglist li:not(.tagvnlist-inherited) small { color: var(--link) }
+.vntaglist h3 a { color: var(--maintext) }
+.vntaglist .lie { text-decoration: line-through }
+.vntaglist li { list-style-type: none; padding-right: 30px }
+.vntaglist li .tagscore { margin-right: 10px }
+
+
+/***** VN covers tab (/v+/cv) *******/
+
+.vncovers {
+    text-align: center;
+    > div {
+        display: inline-block; text-align: left; vertical-align: top; margin: 15px;
+    }
+    .votes summary { float: right; list-style: none; }
+}
+
+
+/***** Vote stats ****/
+
+.votestats           { width: 100%; max-width: 630px; margin: 0 auto; }
+.votegraph           { float: left; margin-right: 20px }
+.votegraph td        { padding: 0 2px }
+.votegraph td.number { text-align: right }
+.votegraph td div    { float: left; height: 16px; background-color: var(--border); margin-right: 2px; padding: 0; }
+.votestats thead td  { background: transparent; text-align: center; padding: 2px; }
+.votestats tfoot td  { text-align: right }
+.votestats div       { text-align: center; padding-top: 5px; }
+
+.recentvotes               { width: 300px }
+.recentvotes thead tr td span { font-weight: normal; padding-left: 5px }
+
+
+
+/***** Polls ****/
+
+.votebooth            { margin: 0 30px }
+.votebooth thead td   { font-weight: normal; background: transparent }
+.votebooth tfoot td   { padding-top: 5px }
+.votebooth td         { padding: 0 8px; }
+.votebooth td.tc1     { padding-right: 20px }
+.votebooth td.tc2     { min-width: 240px }
+.votebooth td.tc2 div { display: inline-block; height: 15px; background-color: var(--border); vertical-align: middle }
+.votebooth td.tc3     { text-align: right }
+.votebooth input[type=submit] { width: 100px }
+
+
+
+/***** VN edit *****/
+
+.vnedit_scr { width: 95%; margin: auto }
+.vnedit_scr > tr:nth-child(odd) > td { background: var(--boxbg) }
+.vnedit_scr > tr > td { border-bottom: 1px solid var(--border) }
+.vnedit_scr > tr > td:nth-child(1) { padding: 10px; width: 136px }
+.vnedit_scr > tr > td:nth-child(2) { width: 10px; padding-top: 20px }
+
+
+/***** VN Release tab *****/
+
+.releases_compare table     { margin: 0 auto; }
+.releases_compare td        { margin: 0 auto; border: 1px solid var(--border); }
+.releases_compare td.bg     { background: var(--boxbg); }
+.releases_compare td.multi  { vertical-align:middle; }
+.releases_compare .key      { background: var(--boxbg); }
+
+/****** VN browse ********/
+
+.vnbrowse .tc_score      { padding-left: 30px; width: 70px  }
+.vnbrowse .tc_score + td { padding-left: 0 }
+.vnbrowse .tc_ulist      { padding-left: 20px; width: 16px }
+.vnbrowse .tc_ulist + td.tc_title { padding-left: 10px }
+.vnbrowse .tc_title      { padding-left: 30px }
+.vnbrowse .tc_plat       { text-align: right; padding: 0; }
+.vnbrowse .tc_lang       { padding: 0; }
+.vnbrowse .tc_rating     { width: 100px; white-space: nowrap }
+.vnbrowse .tc_average    { width: 80px; white-space: nowrap }
+
+.vncards { padding: 0; display: flex; flex-wrap: wrap }
+.vncards > div { padding: 2px 2px 10px 2px; display: flex; flex: 1; min-width: 380px }
+.vncards > div:hover { background-color: var(--secbg) }
+.vncards > div > div:first-child { flex-shrink: 0; width: 90px; height: 120px; text-align: center }
+.vncards > div > div:nth-child(2) { height: 120px; padding-left: 5px; overflow-y: hidden; width: 100% }
+.vncards table td { padding: 0 5px 0 0 }
+.vncards .ulist-widget-icon { float: right; margin: 2px 5px 0 5px!important }
+
+.vngrid { padding: 10px; display: flex; flex-wrap: wrap; justify-content: space-evenly }
+.vngrid > div { margin: 5px 10px 15px 10px; flex: 1 0 200px; max-width: 256px; height: 300px; background-size: cover; background-repeat: no-repeat; background-position: top }
+.vngrid > div > a { display: none }
+.vngrid > div > a:hover { border-bottom: none }
+.vngrid > div:hover > a, .vngrid > div.noimage > a { padding: 5px; display: block; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); color: var(--maintext) }
+.vngrid > div > a > span:first-child { display: block; font-weight: bold }
+.vngrid table { margin: 10px 0 }
+.vngrid table td { padding: 0 5px 0 0 }
+.vngrid .ulist-widget-icon { float: right; margin: 273px 0 -300px 0px!important; padding: 10px 5px 0 10px; background-color: rgba(0,0,0,0.8); border-radius: 15px 0 0 0 } /* Horrible hacks everywhere */
+
+
+
+/***** Producer page *******/
+
+.prodvns { list-style-type: none }
+.prodvns li > span:first-child { display: inline-block; width: 95px; text-align: right; padding-right: 15px }
+.prodvns li > span:last-child { color: var(--grayedout); padding-left: 15px }
+.prodvns .ulist-widget-icon { padding-right: 5px }
+
+
+/***** Producer list ******/
+
+.producerbrowse ul    { -webkit-column-width: 250px; -moz-column-width: 250px; column-width: 250px; margin-bottom: 10px }
+.producerbrowse ul li { list-style-type: none; }
+.producerbrowse ul li abbr { margin-right: 5px; margin-top: 1px; }
+
+
+
+
+/***** Release page *****/
+
+.release > table { width: 100%; max-width: 700px; margin: 0 auto; }
+.release td.titles table  { margin-left: 96px }
+.release tr.title td     { padding: 0 0px }
+.release tr.title td:first-child { width: 20px }
+.release .key  { width: 110px; }
+.release dt { float: none; font-style: normal; }
+.release dd { margin-left: 15px; }
+
+.release .relimg {
+    text-align: center;
+    > div { display: inline-block; text-align: left; vertical-align: top; margin: 15px }
+}
+
+
+/***** Review page *****/
+
+.fullreview td { padding: 0 0 15px 10px }
+.fullreview tr > td:first-child { width: 140px; text-align: right; font-weight: bold }
+.fullreview tr > td:last-child { max-width: 700px }
+.fullreview .myvote { font-weight: bold; text-decoration: underline }
+
+#reviewspoil:not(:checked) ~ .fullreview .reviewspoil     { display: none }
+#reviewspoil:checked       ~ .fullreview .reviewnotspoil  { display: none }
+
+
+/***** Review browser *****/
+
+.reviewlist td.tc1 { width: 120px }
+.reviewlist td.tc2 { width: 110px; }
+.reviewlist td.tc3 { width: 50px; text-align: right }
+.reviewlist td.tc4 { width: 50px }
+.reviewlist td.tc6 { width: 140px }
+.reviewlist td.tc7 { width: 30px; text-align: right }
+.reviewlist td.tc8 { width: 260px; text-align: right }
+
+
+/***** Release browser *****/
+
+.relbrowse .tc1 { width: 80px }
+.relbrowse .tc2 { width: 60px; text-align: center; }
+.relbrowse .tc3 { width: 85px; text-align: right; padding: 0; }
+
+
+/***** DRM & Engine List ****/
+
+.drmlist {
+    margin: 0 auto; max-width: 900px;
+    > div { margin: 3px 20px 10px 20px }
+}
+
+
+/***** Misc::Extlinks *****/
+
+.extlinks-status td:not(.tc1) { width: 100px; white-space: nowrap }
+
+.extlink-queues tr {
+    td { white-space: nowrap }
+    .tc1 { width: 100px }
+    td:nth-child(2), td:nth-child(4) { width: 70px; text-align: right }
+    td:nth-child(3) { width: 100px; text-align: right }
+    td:nth-child(5) { width: 70px }
+}
+
+.extlink-info {
+    margin: 0 auto; min-width: 500px;
+    tr > td:first-child { width: 100px }
+}
+.extlink-history {
+    .tc1 { width: 180px; white-space: nowrap }
+}
+
+
+/***** Image hover thingy (VNWeb::Images::Lib::images_) ****/
+
+.imghover {
+    margin: 0 auto; text-align: center; position: relative;
+    &> a { border-bottom: 0 }
+    .imghover--overlay { display: none; white-space: nowrap; font-size: 11px }
+    &:hover .imghover--overlay { display: block; position: absolute; right: 0; bottom: 0; padding: 5px 10px; background: var(--secbg) }
+    summary {
+        list-style: none; height: 100%; border: 1px solid var(--border); background: var(--secbg); display: flex; flex-direction: column; justify-content: center;
+        > div { display: block; padding: 10px 5px; }
+        > span { display: none }
+    }
+    &[open] summary {
+        height: 0; border: 0;
+        > div { display: none }
+    }
+    &[open]:hover summary > span { display: block; position: absolute; right: 0; top: 0; background: var(--secbg); padding: 5px; }
+
+    .vnimagevote { display: none }
+    &:hover .vnimagevote, .vnimagevote.voted { display: block; position: absolute; left: 0; top: 0; font-size: 24px; line-height: 24px; cursor: pointer; padding: 3px }
+    &:hover .vnimagevote { background: var(--secbg) }
+    .vnimagevote.voted { color: #cccc00; text-shadow: 0px 0px 4px #000 }
+}
+
+
+
+/***** Char page (also used on VN page) *****/
+
+p.chardetailopts { margin: -10px auto 7px auto; width: 800px; text-align: right }
+p.chardetailopts a { margin: 0 5px }
+p.chardetailopts a:last-child { margin: 0 0 0 5px }
+div.charimg     { float: left; width: 256px; margin: 0 15px 0 0; text-align: center }
+div.charimg p   { text-align: center; padding: 0px; margin: 0; }
+.chardesc h2    { margin: 0; }
+.chardesc p     { padding: 0 0 0 5px; }
+div.chardetails {
+    margin: 0 auto; width: 800px;
+    &.charsep     { margin-top: 30px }
+    > table       { float: left; width: 525px; }
+    td.key        { width: 106px; }
+    .names td     { padding: 0 5px; vertical-align: baseline }
+    .names td:first-child { padding-left: 0 }
+    .lie          { text-decoration: line-through }
+}
+div.charquotes { margin: 0 auto; width: 800px; }
+
+
+/***** Char browse *****/
+
+.charb table    { table-layout: fixed }
+.charb td       { white-space: nowrap }
+.charb td.tc1   { text-align: right; width: 40px; padding-left: 0!important; padding-bottom: 0 }
+.charb td.tc2   { overflow: hidden }
+.charb td.tc2 small { margin-left: 10px }
+.charb td.tc2 small a { color: inherit }
+
+.charbcard { padding: 0; display: flex; flex-wrap: wrap }
+.charbcard > div { padding: 2px 2px 10px 2px; display: flex; flex: 1; min-width: 280px }
+.charbcard > div:hover { background-color: var(--secbg) }
+.charbcard > div > div:first-child { flex-shrink: 0; width: 90px; height: 120px; text-align: center }
+.charbcard > div > div:nth-child(2) { height: 120px; padding-left: 5px; overflow-y: hidden }
+.charbcard small a { color: inherit }
+
+.charbgrid { padding: 10px; display: flex; flex-wrap: wrap; justify-content: space-evenly }
+.charbgrid a { margin: 5px 10px 15px 10px; flex: 1 0 200px; max-width: 256px; height: 300px; background-size: cover; background-repeat: no-repeat; background-position: top; text-align: center; opacity: 0.9 }
+.charbgrid a:hover { border-bottom: none; opacity: 1 }
+.charbgrid span { display: block; margin: 0 auto; padding: 2px; font-size: 15px; font-weight: bold; background-color: rgba(0,0,0,0.4); color: var(--maintext) }
+
+
+/***** Staff browse *****/
+
+.staffbrowse	   { padding-bottom: 10px }
+.staffbrowse ul    { margin-top: -5px; margin-left: 3%; column-width: 300px }
+.staffbrowse ul li { list-style-type: none; margin-bottom: 2px; }
+.staffbrowse ul li abbr { margin-right: 5px; margin-top: 1px; }
+.staffpage table.stripe { width: 450px; margin: 0 auto; }
+.staffpage .key  { width: 76px; }
+.staffroles td.tc_ulist { padding-left: 15px; width: 40px }
+.staffroles td.tc_ulist + td { padding-left: 0!important }
+.staffroles td.tc2 { white-space: nowrap; width: 100px }
+.staffroles td.tc3 { white-space: nowrap; width: 100px }
+.staffroles td.tc4 { white-space: nowrap; padding-right: 10px }
+table.aliases td { padding: 0 5px; }
+table.aliases td.key { padding: 0 5px 0 0; width: auto }
+
+
+/***** Staff display on VN pages *****/
+
+.vnstaff div { width: 97%; margin: 0 auto 5px auto; justify-content: space-between }
+.vnstaff ul { list-style: none; margin: 0 }
+.vnstaff-2 ul { width: 100% } .vnstaff-2 { flex-wrap: wrap }
+.vnstaff-3 ul { width: 32% }
+.vnstaff-4 ul { width: 24% }
+.vnstaff li { padding-bottom: 1px; padding-left: 10px; }
+.vnstaff li a { display: inline-block; margin-left: -10px }
+.vnstaff li small { padding-left: 10px }
+.vnstaff li.vnstaff_head { font-weight: bold; padding-left: 0 }
+.vnstaff li:not(:first-child).vnstaff_head { margin-top: 15px }
+.vnstaff summary { background: var(--boxbg); font-weight: bold; width: 100% }
+@media(min-width:   0px) { .vnstaff-2{display:flex} .vnstaff-3{display:none} .vnstaff-4{display:none} }
+@media(min-width: 850px) { .vnstaff-2{display:flex} .vnstaff-3{display:none} .vnstaff-4{display:none} .vnstaff-2 ul {width:49%} .vnstaff-2{flex-wrap:nowrap} }
+@media(min-width:1000px) { .vnstaff-2{display:none} .vnstaff-3{display:flex} .vnstaff-4{display:none} }
+@media(min-width:1250px) { .vnstaff-2{display:none} .vnstaff-3{display:none} .vnstaff-4{display:flex} }
+
+div.charsum_list { text-align: center }
+div.charsum_list .name { white-space: nowrap; display: flex; justify-content: space-between }
+div.charsum_list .name span { overflow: hidden; text-overflow: ellipsis; padding-bottom: 1px }
+div.charsum_list .name a { font-weight: bold }
+div.charsum_list .actor { border-top: 1px solid var(--border); padding-top: 3px }
+div.charsum_list .actor small { margin-left: 10px }
+div.charsum_list .charsum_bubble {
+  background: var(--boxbg);
+  display: inline-block;
+  text-align: left;
+  vertical-align: top;
+  width: 100%;
+  max-width: 340px;
+  margin: 3px;
+  padding: 3px 10px;
+}
+
+
+/***** Documentation pages *****/
+
+.docs               { padding: 0 15% 20px 15%; line-height: 1.4 }
+.docs h3            { margin: 30px 0 5px; font-size: 16px }
+.docs h4            { margin-top: 15px; font-size: 14px }
+.docs h3 a:target,
+.docs h4 a:target   { color: var(--standout) }
+.docs dd            { margin: 5px 0 5px 120px }
+.docs dt            { float: left }
+.docs ul, .docs ol  { margin: 5px 0 5px 20px }
+.docs table         { margin: 10px; width: 95% }
+.docs td            { white-space: nowrap }
+.docs td            { white-space: nowrap }
+.docs td+td+td+td,
+.docs td[colspan],
+.docs td[colspan]+td,
+.docs td[colspan]+td+td { white-space: normal }
+.docs p + p         { padding-top: 10px }
+.docs ul.index      { display: block; float: right; width: 190px; padding: 2px; margin: 0 0 10px 5px; background: var(--boxbg); border: 1px solid var(--border); }
+.docs ul.index li   { list-style-type: none; }
+.docs ul.index li a { margin: 0 0 0 10px; }
+.docs img           { margin: 5px }
+
+
+
+/* vote lists */
+
+.votelist td.tc1 { width: 100px; padding-top: 0; padding-bottom: 0 }
+.votelist td.tc2 { width: 50px; text-align: right; padding-right: 10px }
+
+
+
+/* vn/user length vote list */
+
+.lengthlist {
+    .tc1 { width: 120px }
+    .tc3 { width: 60px; white-space: nowrap }
+    .tc4 { width: 100px; padding-left: 10px }
+    .tc5 { width: 70px; white-space: nowrap }
+    .tc7 { width: 10px; text-align: right; padding: 0 }
+    select { width: 70px }
+}
+
+
+/***** User's VN list *****/
+
+.labelfilters { text-align: center }
+.labelfilters .xsearch { text-align: left }
+.labelfilters .linkradio { padding: 5px }
+
+.managelabels {
+    fieldset > div { width: 600px; margin: 10px auto }
+    table { margin: 0 auto }
+    tbody td:nth-child(1) { text-align: right }
+    tbody td:nth-child(4) {
+        padding-left: 10px; width: 300px;
+        svg { width: 14px; height: 14px; cursor: pointer }
+    }
+    select { width: 100% }
+    tfoot div { float: right; text-align: right }
+}
+
+.savedefault { width: 600px; margin: 10px auto }
+.exportlist { width: 600px; margin: 10px auto }
+
+.ulist .tc_ulist { padding-left: 20px; width: 40px; white-space: nowrap }
+.ulist .tc_ulist + td.tc_title { padding-left: 10px }
+.ulist .tc_title { padding-left: 30px }
+.ulist .tc_title small { margin-left: 10px }
+.ulist .tc_vote { white-space: nowrap; width: 60px; text-align: right; padding-right: 10px }
+.ulist .tc_vote button { width: 50px; text-align: right }
+.ulist .tc_labels button { width: 100% }
+.ulist .tc_voted,
+.ulist .tc_added,
+.ulist .tc_modified,
+.ulist .tc_date,
+.ulist .tc_rdate  { white-space: nowrap; width: 100px }
+.ulist .tc_rating { white-space: nowrap; width: 80px }
+
+.ulist .tc_date {
+    position: relative;
+    > div > div { position: absolute; top: -3px; right: 0px; min-width: 100px; background: var(--blendbg); z-index: 100 }
+    > div { display: block; cursor: pointer; width: 100% }
+    > div:hover svg { visibility: visible }
+    svg { visibility: hidden; width: 14px; height: 14px }
+}
+
+
+/***** ulist-widget (js/user/List.js) *****/
+
+.ulist-widget-icon { cursor: pointer }
+.ulist-widget {
+    z-index: 99; position: fixed; height: 100%; width: 100%; top: 0; right: 0; display: flex; align-items: center; justify-content: center safe; background: var(--boxbg); padding: 100px 0; overflow: auto;
+    > div {
+        background: var(--blendbg); width: 624px; min-height: 324px; border: 2px solid var(--border); padding: 10px; margin: auto;
+        > .spinner { position: absolute; top: unquote('calc(50% - 8px)'); right: unquote('calc(50% - 8px)'); }
+    }
+    .status { float: right; height: 26px }
+    table { width: 100% }
+    table tr { background: none!important }
+    table td:first-child { width: 106px }
+    textarea { width: 100% }
+    .notes { position: relative }
+    .notes .spinner { position: absolute; right: 5px; top: 5px }
+    .labels button { width: 100% }
+    .vote button { width: 80px }
+    .rel select { margin: -1px 0 }
+}
+
+
+/***** User notifications *****/
+
+.usernotifies {
+    margin: 0 auto;
+    td:not(:first-child) { text-align: right }
+    tr.sel td:first-child, td.sel { font-weight: bold }
+}
+
+.browse.notifies {
+    td { vertical-align: middle; }
+    .tc1       { width: 14px }
+    .tc2       { white-space: nowrap; width: 150px }
+    .tc3       { width: 100px }
+    .tc4       { padding-right: 0; width: 60px; text-align: right }
+    .tc5       { padding-left: 0; width: 10px }
+    .tc6       { padding-left: 10px }
+    .tc6 a     { color: var(--grayedout) }
+    .tc6 span  { color: var(--maintext) }
+    tfoot td   { padding: 0 0 0 25px }
+}
+
+.notifysettings {
+    margin-left: 20px;
+    tr td:not(:last-child) { white-space: nowrap; width: 10px }
+    .hdr td { padding-top: 10px }
+    .hdr small { color: transparent; text-shadow: 0 0 var(--grayedout) }
+    .sub td:first-child { padding-left: 15px }
+}
+
+
+/***** Maintabs dropdown thingy used by js Subscribe & TableOpts ****/
+
+.maintabs-dd p, .maintabs-dd h4, .maintabs-dd label { display: block; margin-bottom: 3px }
+.maintabs-dd h4 { text-align: center }
+.maintabs-dd > div { position: absolute; width: 1px }
+.maintabs-dd > div > div { width: 500px; border: 1px solid var(--border); background: var(--secbg); position: relative; bottom: 0; left: -470px; z-index: 100 }
+
+.tableopts > li > a > svg { width: 14px; height: 14px }
+.tableopts-results > div > div { width: 180px; left: -140px; text-align: center }
+.tableopts-save > div > div { width: 250px; left: -210px; text-align: center }
+.tableopts-save input { width: 97% }
+.tableopts-save input:nth-of-type(2) { margin-top: 15px }
+.tableopts-cols > div > div { width: 150px; left: -110px; text-align: right; padding: 0 10px }
+.tableopts-sort > div > div { width: 250px; left: -210px; text-align: right; padding: 0 10px }
+.tableopts-sort table { margin: 0 0 0 auto }
+.tableopts-sort td { padding: 0 0 0 15px }
+
+.subscribe .inactive { color: transparent; text-shadow: 0 0 var(--grayedout) }
+.subscribe .active { color: transparent; text-shadow: 0 0 var(--maintext) }
+.subscribe > div > div { padding: 10px }
+
+/***** User list *****/
+.browse.userlist .tc3,
+.browse.userlist .tc4,
+.browse.userlist .tc5,
+.browse.userlist .tc6,
+.browse.userlist .tc7,
+.browse.userlist .tc8 { text-align: right; padding-right: 10px; padding-left: 0 }
+
+
+/***** Userpage *****/
+
+.userpage table { width: 600px; margin: 0 auto; }
+.userpage .key  { width: 106px; }
+
+
+/***** User posts browser ****/
+.uposts table    { table-layout: fixed }
+.uposts td       { white-space: nowrap }
+.uposts td.tc1   { width: 60px; padding-left: 0!important; padding-right: 0; text-align: right }
+.uposts td.tc2   { width: 40px; padding-left: 0 }
+.uposts td.tc3   { width: 80px; }
+.uposts td.tc4   { overflow: hidden }
+.uposts td.tc4 small { margin-left: 10px }
+
+
+
+
+/***** Tag page *****/
+
+.tagtree        { margin-left: 20px; margin-top: -20px; list-style-type: none; }
+.tagtree li     { float: left; width: 230px; margin-top: 10px; }
+.tagtree li li  { float: none; width: auto; margin-top: 0; }
+.tagtree ul     { margin-left: 10px; list-style-type: none; }
+.tagvnlist .tc1 { width: 105px; }
+.tagvnlist .tc1 i { font-style: normal; font-size: 10px }
+.tagvnlist .tc3 { text-align: right; padding: 0; }
+.tagvnlist .tc4 { padding: 0; }
+.tagvnlist .tc6 { text-align: right; padding-right: 10px; }
+
+
+/***** Tag list (/g/list) *****/
+
+.browse.taglist .tc1 { width: 120px; white-space: nowrap }
+.browse.taglist .tc2 { width: 50px; white-space: nowrap }
+.browse.taglist tbody .tc3 a { margin-right: 10px }
+
+
+/***** Tag links *****/
+
+.browse.taglinks .tc1 { width: 100px }
+.browse.taglinks .tc3 { width: 80px }
+.browse.taglinks .setfil { font-size: 10px; padding-right: 3px }
+
+.tagscore { white-space: nowrap; display: inline-block; width: 58px; }
+.tagscore > span { display: inline-block; width: 25px; text-align: right; padding-right: 3px; font-size: 11px }
+.tagscore > div  { display: inline-block; height: 13px; background: linear-gradient(90deg, #cf0 0px, #0f0 30px) }
+.tagscore.negative > div  { background: #f00 }
+.tagscore.negative > span { color: var(--standout) }
+.tagscore.ignored  > div  { background: #222 }
+.tagscore.ignored  > span { color: var(--grayedout) }
+
+
+/****** Revision information ******/
+
+.revision div.rev, .revision table {
+  border: 1px solid var(--border);
+  margin: 0 auto;
+  width: 90%;
+  background-color: var(--secbg);
+  clear: both;
+}
+.revision          { padding-bottom: 10px; }
+.revision table thead tr td { background-color: transparent!important; text-align: center; font-weight: normal; }
+.revision table td { border-right: 1px solid var(--border); padding: 5px; }
+.revision td.tcval { width: 44%; overflow-wrap: anywhere; }
+.revision div.rev  { padding: 5px; text-align: center; }
+.diff_add             { background-color: var(--diffadd); }
+.diff_del             { background-color: var(--diffdel); }
+.revision .next    { float: right; margin-right: 5%; }
+.revision .prev    { float: left; margin-left: 5%; }
+.revision .item    { text-align: center; }
+
+
+
+/****** Image Viewer *****/
+
+div#iv_view {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  background: var(--boxbg);
+  border: 1px solid var(--border);
+  padding: 5px;
+  text-align: center;
+}
+#iv_view a   { border: 0; font-weight: bold; font-size: 14px }
+#iv_view img { cursor: pointer }
+#ivclose     { float: right; padding-left: 10px }
+#ivnext      { padding-left: 5px; }
+#ivprev      { padding-right: 5px; }
+#ivfull      { float: left; padding-right: 10px; }
+#ivimgload {
+  position: absolute;
+  display: block;
+  left: 0;
+  top: 0;
+  width: 100px;
+  padding: 3px;
+  background-color: #f5f5f5; /* no real need to skin this */
+  text-align: center;
+  border: 1px solid #ccc;
+  color: #000;
+}
+
+/* ivview childs:
+ *   1  div -> loading
+ *   2  div -> img
+ *   3  div -> links
+ *      1  a -> full
+ *      2  a -> prev
+ *      3  a -> next
+ *      4  a -> flagging
+ */
+.ivview     { position: fixed; background: var(--boxbg); border: 2px solid var(--border); padding: 5px; text-align: center; box-sizing: content-box }
+.ivview img { cursor: pointer }
+.ivview > div:nth-child(1) { position: absolute; left: 48%; top: 48%; width: 30px; height: 30px }
+.ivview > div:nth-child(2) { position: relative }
+.ivview > div:nth-child(2) .left-pane { 
+  position: absolute;
+  border: none;
+  height: 100%;
+  width: 25%;
+  top: 0;
+  transition: opacity 0.25s ease-in-out;
+  opacity: 0;
+  background: linear-gradient(90deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 100%);
+}
+.ivview > div:nth-child(2) .left-pane:hover {
+  opacity: 1;
+}
+.ivview > div:nth-child(2) .right-pane { 
+  position: absolute;
+  border: none;
+  height: 100%;
+  width: 25%;
+  top: 0;
+  right: 0;
+  transition: opacity 0.25s ease-in-out;
+  opacity: 0;
+  background: linear-gradient(270deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 100%);
+}
+.ivview > div:nth-child(2) .right-pane:hover {
+  opacity: 1;
+}
+.ivview > div:nth-child(3) { width: 100%; display: flex }
+.ivview > div:nth-child(3) > a { flex: 1; text-align: left; border: 0; font-weight: bold; font-size: 14px; white-space: nowrap }
+.ivview > div:nth-child(3) > a:nth-child(2) { text-align: right; padding-right: 5px }
+.ivview > div:nth-child(3) > a:nth-child(3) { padding-left: 5px }
+.ivview > div:nth-child(3) > a:nth-child(4) { text-align: right; font-size: 11px; font-weight: normal }
+
+
+
+/****** Advanced Search *******/
+
+/* The classes are called 'xsearch' instead of 'advsearch' because the latter triggers some ad blockers. :( */
+
+.op_neg { text-decoration: line-through double var(--standout) }
+.xsearch_opts {
+    display: flex; justify-content: space-between; align-items: center; background-color: var(--blendbg);
+    > div { white-space: nowrap }
+    > strong { flex: 1; text-align: center }
+}
+.xsearch_nest { background-color: var(--blendbg); padding: 0 5px 2px 5px; }
+.xsearch_range { /* Also abused for a few other fields */
+    > div:first-child {
+        background-color: var(--blendbg); padding: 0 5px 2px 5px; display: flex; justify-content: space-between; align-items: center;
+        > div * { font-size: 140%; padding: 0 4px }
+    }
+    > div:nth-child(2) { display: flex; justify-content: space-between }
+    > input { width: 100% }
+}
+.xsearch_list {
+    width: 100%; list-style-type: none; margin: 0;
+    li { white-space: nowrap; display: block; width: 100%; overflow: hidden; text-overflow: ellipsis }
+}
+.xsearch {
+    max-width: 850px; margin: 0 auto; display: flex; flex-direction: row; justify-content: center; align-items: flex-start;
+    button { margin: 4px; vertical-align: middle }
+    .field {
+        width: 150px;
+        > span { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+    }
+    td { padding: 0 2px 0 0 }
+    tr > td:first-child { text-align: right; white-space: nowrap }
+
+    /* Line drawing. This is awful */
+    .lines {
+        position: relative; width: 15px; padding: 0;
+        div { border-left: 1px solid var(--border); width: 15px; position: absolute; left: 5px; top: 0; bottom: 0 }
+        &.start { top: 13px }
+        &.start div { border-top: 1px solid var(--border) }
+        &.start span { display: block; position: absolute; left: -5px; top: 0; width: 15px; border-top: 1px solid var(--border); height: 1px }
+        &.end div { bottom: 13px; border-bottom: 1px solid var(--border) }
+        &.mid span { display: block; position: absolute; left: 5px; top: 13px; width: 15px; border-top: 1px solid var(--border); height: 1px }
+    }
+}
+
+
+
+/****** Image flagging *******/
+
+/* divs:
+ *   1: header
+ *   2: image
+ *   3: metadata
+ *   4: vote box
+ *   6: other user's votes */
+.imageflag { margin: auto; min-width: 600px; max-width: 1200px }
+.imageflag > ul:nth-child(1) { margin-left: 15px }
+.imageflag > div:nth-child(1) { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2px }
+.imageflag > div:nth-child(1) span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0px 20px }
+.imageflag > div:nth-child(2) { border: 1px solid var(--border); padding: 5px; background: #000 }
+.imageflag > div:nth-child(2) a { border: none; display: block; display: flex; display: flex; justify-content: center; align-items: center; height: 500px; height: unquote('clamp(300px, calc(100vh - clamp(200px, calc(100vh - 500px), 350px)), 700px)') }
+.imageflag > div:nth-child(2) img { max-width: 100%; max-height: 100% }
+.imageflag > div:nth-child(3) { display: flex; justify-content: space-between; }
+.imageflag > div:nth-child(4) { display: flex; margin-bottom: 5px }
+.imageflag > div:nth-child(4) p { flex: 1 0; padding-top: 15px }
+.imageflag > div:nth-child(4) ul { list-style-type: none; margin: 0 5px 0 0 }
+.imageflag > div:nth-child(4) ul li:first-child { text-align: center }
+.imageflag > div:nth-child(4) ul li     label { display: inline-block; border: 1px solid var(--secborder); padding: 7px; width: 116px; white-space: nowrap; margin: 2px 0; cursor: pointer }
+.imageflag > div:nth-child(4) ul li.sel label,
+.imageflag > div:nth-child(4) ul li     label:hover { background-color: var(--secbg) }
+.imageflag > div:nth-child(4) ul li.overrule label { position: relative; left: 80px; border: none; padding: 0 }
+.imageflag > div:nth-child(6) { min-height: 200px; padding: 15px 0 }
+.imageflag > div:nth-child(6) table { margin: 0 auto }
+.imageflag > div:nth-child(6) table tr.ignored td:nth-child(2),
+.imageflag > div:nth-child(6) table tr.ignored td:nth-child(3) { text-decoration: line-through; color: var(--grayedout) }
+.imageflag > div:nth-child(6) table td { min-width: 50px }
+.imageflag .fullscreen {
+    position: fixed; left: 0; top: 0; width: 100%; height: 100%; background-repeat: no-repeat; background-position: center; background-size: contain; background-color: #000;
+    display: flex; align-items: flex-end; justify-content: space-between;
+    > * { background-color: var(--boxbg); padding: 3px }
+    > *:last-child { text-align: right }
+}
+
+
+/****** Image browser (/img/browse) ******/
+
+.imagebrowse { padding: 0; display: flex; flex-wrap: wrap }
+.imagebrowse .imagecard { padding: 2px; display: flex; flex: 1 }
+.imagebrowse .imagecard:hover { background-color: var(--secbg) }
+.imagebrowse .imagecard > a { flex-shrink: 0; display: block; width: 150px; height: 120px; background-size: contain; background-repeat: no-repeat; background-position: top right; border: none }
+.imagebrowse .imagecard > div { padding: 0 0 0 4px }
+.imagebrowse .imagecard > div svg { font-size: 11px }
+.imagebrowse .imagecard > div svg .errorbar { stroke: var(--standout); stroke-width: 2 }
+.imagebrowse .imagecard > div svg .ruler { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 }
+.imagebrowse .imagecard > div svg rect { fill: var(--maintext) }
+
+
+/****** Icons *******/
+
+/* XXX: Icon elements MUST have their 'icon-*' class as the first in the list */
+[class^=icon-] { cursor: inherit; margin: 0 2px 0 0; display: inline-block; text-decoration: none; margin: 0 2px 0 0 }
+[class^=icon-lang-],
+.icon-external,
+.icon-rtcomplete, .icon-rtpartial, .icon-rttrial { background-image: url(/icons.png?#{$png-version}) }
+[class^=icon-char-],
+[class^=icon-plat-],
+[class^=icon-drm-],
+[class^=icon-rel-],
+[class^=icon-list-],
+[class^=icon-el-],
+.icon-rss { background-image: url(/icons.svg?#{$svg-version}) }
+
+[class^=icon-lang-] { opacity: 0.5 }
+[class^=icon-lang-].mtl { filter: grayscale(1); opacity: 0.4 }
+[class^=icon-plat-] { margin: -1px 2px -1px 0 }
+[class^=icon-list-] { margin: -1px 0 }
+
+.icon-rel-v2, .icon-rel-a2 { filter: hue-rotate(30deg); }
+.icon-rel-v3, .icon-rel-a3 { filter: invert(100%) hue-rotate(240deg); }
+.icon-rel-v4, .icon-rel-a4 { filter: hue-rotate(80deg); }
+
+.charsex-w { filter: invert(100%) } /* #fff */
+.charsex- { filter: invert(38%) sepia(65%) saturate(467%) hue-rotate(162deg) brightness(98%) contrast(94%) } /* $grayedout */
+.charsex-m { filter: invert(81%) sepia(89%) saturate(786%) hue-rotate(109deg) brightness(104%) contrast(106%) } /* #0ff */
+.charsex-f { filter: invert(25%) sepia(99%) saturate(4716%) hue-rotate(291deg) brightness(108%) contrast(133%) }
+.charsex-b { filter: invert(16%) sepia(72%) saturate(5487%) hue-rotate(356deg) brightness(95%) contrast(121%) }
+.charsex-n { filter: invert(96%) sepia(38%) saturate(2940%) hue-rotate(358deg) brightness(104%) contrast(105%) } /* #ff0 */
+
+
+/* Relation graph */
+svg .border { fill: none; stroke: var(--border) }
+svg .edge polygon.border { fill: var(--border) }
+svg .nodebg { fill: var(--tabbg); stroke: var(--tabbg) }
+svg text { fill: var(--maintext); font: 8px "Tahoma", "Arial", sans-serif }
+svg .title { font-size: 9px }
+#graph_current .border { stroke: var(--warnborder) }
+#graph_current .nodebg { stroke: var(--warnborder); fill: var(--warnbg) }
+

@@ -1,0 +1,364 @@
+package VNWeb::ULists::Main;
+
+use VNWeb::Prelude;
+use VNWeb::ULists::Lib;
+use VNWeb::VN::Lib;
+use VNWeb::Releases::Lib;
+
+
+my $TABLEOPTS = VNWeb::VN::List::TABLEOPTS('ulist');
+
+my %SAVED_OPTS = (
+    l   => { onerror => [], accept_scalar => 1, elems => { int => 1, range => [-1,1600] } },
+    mul => { anybool => 1 },
+    s   => { onerror => '' }, # TableOpts query string
+    f   => { onerror => '' }, # AdvSearch
+);
+
+my $SAVED_OPTS = form_compile any => \%SAVED_OPTS;
+
+
+sub opt {
+    my($u, $labels) = @_;
+
+    # Note that saved defaults may still use the old query format, which is
+    #   { s => $sort_column, o => $order, c => [$visible_columns] }
+    my sub load { my $o = $u->{"ulist_$_[0]"}; ($o || {})->%* };
+
+    state $s_default  = FU::Validate->compile({ tableopts => $TABLEOPTS })->validate(undef);
+    state $s_vnlist   = $s_default->sort_param(title => 'a')->vis_param(qw/label vote added started finished/)->enc_query;
+    state $s_votes    = $s_default->sort_param(voted => 'd')->vis_param(qw/vote voted/)->enc_query;
+    state $s_wishlist = $s_default->sort_param(title => 'a')->vis_param(qw/label added/)->enc_query;
+    state @all = (mul => 0, p => 1, f => '', q => FU::Validate->compile({ searchquery => 1 })->validate(undef));
+
+    my $opt =
+        # Presets
+        fu->query('vnlist')   ? { @all, l => [1,2,3,4,7,0], s => $s_vnlist,   load 'vnlist' } :
+        fu->query('votes')    ? { @all, l => [7],           s => $s_votes,    load 'votes'  } :
+        fu->query('wishlist') ? { @all, l => [5],           s => $s_wishlist, load 'wish'   } :
+        # Full options
+        fu->query(
+            p => { upage => 1 },
+            ch=> { accept_array => 'first', onerror => undef, enum => ['0', 'a'..'z'] },
+            q => { searchquery => 1 },
+            %SAVED_OPTS,
+            # Compat for old URLs
+            o => { onerror => undef, enum => ['a', 'd'] },
+            c => { onerror => undef, accept_scalar => 1, elems => { enum => [qw[ label vote voted added modified started finished rel rating ]] } },
+        );
+
+    $opt->{s} .= "/$opt->{o}" if $opt->{o};
+    $opt->{s} = FU::Validate->compile({ tableopts => $TABLEOPTS })->validate($opt->{s});
+    $opt->{s} = $opt->{s}->vis_param(map $_ eq 'rel' ? 'released' : $_, $opt->{c}->@*) if $opt->{c};
+    delete $opt->{o};
+    delete $opt->{c};
+
+    $opt->{f} = FU::Validate->compile({ advsearch_err => 'v' })->validate($opt->{f});
+
+    # $labels only includes labels we are allowed to see, getting rid of any
+    # labels in 'l' that aren't in $labels ensures we only filter on visible
+    # labels.
+    # Also, '-1' used to refer to the virtual "No label" label, now it's '0' instead.
+    my %accessible_labels = map +($_->{id}, 1), @$labels;
+    my %opt_l = map +($_, 1), grep $accessible_labels{$_}, map $_ == -1 ? 0 : $_, $opt->{l}->@*;
+    %opt_l = %accessible_labels if !keys %opt_l;
+    $opt->{l} = keys %opt_l == keys %accessible_labels ? [] : [ sort keys %opt_l ];
+
+    ($opt, \%opt_l)
+}
+
+
+sub filters_ {
+    my($own, $labels, $opt, $opt_labels, $url) = @_;
+
+    my sub lblfilt_ {
+        input_ type => 'checkbox', name => 'l', value => $_->{id}, id => "form_l$_->{id}", tabindex => 10, $opt_labels->{$_->{id}} ? (checked => 'checked') : ();
+        label_ for => "form_l$_->{id}", "$_->{label} ";
+        txt_ " ($_->{count})";
+    }
+
+    div_ class => 'labelfilters', sub {
+        # Implicit behavior alert: pressing enter in this input will activate
+        # the *first* submit button in the form, which happens to be the "ALL"
+        # character selector. Let's just pretend that is intended behavior.
+        input_ type => 'text', class => 'text', name => 'q', value => $opt->{q}||'', style => 'width: 500px', placeholder => 'Search', tabindex => 10;
+        br_;
+        span_ class => 'browseopts', sub {
+            button_ type => 'submit', name => 'ch', value => ($_//''), ($_//'') eq ($opt->{ch}//'') ? (class => 'optselected') : (), !defined $_ ? 'ALL' : $_ ? uc $_ : '#'
+                for (undef, 'a'..'z', 0);
+        };
+        input_ type => 'hidden', name => 'ch', value => $opt->{ch}//'';
+        $opt->{f}->widget_;
+        p_ class => 'linkradio', sub {
+            join_ sub { em_ ' / ' }, \&lblfilt_, grep $_->{id} < 10, @$labels;
+            span_ class => 'hidden', sub {
+                em_ ' || ';
+                input_ type => 'checkbox', name => 'mul', value => 1, id => 'form_l_multi', tabindex => 10, $opt->{mul} ? (checked => 'checked') : ();
+                label_ for => 'form_l_multi', 'Multi-select';
+            };
+            debug_ $labels;
+            my @cust = grep $_->{id} >= 10, @$labels;
+            if(@cust) {
+                br_;
+                join_ sub { em_ ' / ' }, \&lblfilt_, @cust;
+            }
+        };
+        input_ type => 'submit', class => 'submit', tabindex => 10, value => 'Update filters';
+        input_ type => 'button', class => 'submit', tabindex => 10, id => 'managelabels', value => 'Manage labels' if $own;
+        input_ type => 'button', class => 'submit', tabindex => 10, id => 'savedefault', value => 'Save as default' if $own;
+        input_ type => 'button', class => 'submit', tabindex => 10, id => 'exportlist', value => 'Export' if $own;
+    };
+}
+
+
+sub vn_ {
+    my($own, $priv, $opt, $n, $v, $labels) = @_;
+    tr_ $own ? (id => "ulist_vid_$v->{id}") : (), sub {
+        td_ class => 'tc_ulist', sub {
+            ulists_rlist_counts_ $v if !$own;
+            ulists_widget_ $v if $own;
+        };
+        td_ class => 'tc_voted', $v->{vote_date} ? fmtdate $v->{vote_date}, 'compact' : '-' if $opt->{s}->vis('voted');
+
+        td_ class => 'tc_vote', !$own ? () : (
+            '+' => 'compact stealth', widget('UListVote', {
+                canvote => !!($v->{vote} || sprintf('%08d', $v->{c_released}||99999999) <= strftime '%Y%m%d', gmtime),
+                vid     => $v->{id},
+                vote    => $v->{vote} && fmtvote($v->{vote})
+            }),
+        ), sub { txt_ fmtvote $v->{vote} } if $opt->{s}->vis('vote');
+
+        td_ class => 'tc_rating', sub {
+            txt_ sprintf '%.2f', ($v->{c_rating}||0)/100;
+            small_ sprintf ' (%d)', $v->{c_votecount};
+        } if $opt->{s}->vis('rating');
+        td_ class => 'tc_average',sub {
+            txt_ sprintf '%.2f', ($v->{c_average}||0)/100;
+            small_ sprintf ' (%d)', $v->{c_votecount} if !$opt->{s}->vis('rating');
+        } if $opt->{s}->vis('average');
+
+        td_ class => 'tc_labels', !$own ? () : (
+            '+' => 'compact stealth', widget(UListLabels => { vid => $v->{id}, labels => $v->{labels} })
+        ), sub {
+            my %labels = map +($_,1), $v->{labels}->@*;
+            my @l = grep $labels{$_->{id}} && $_->{id} != 7, @$labels;
+            txt_ @l ? join ', ', map $_->{label}, @l : '-';
+        } if $opt->{s}->vis('label');
+
+        td_ class => 'tc_title', sub {
+            a_ href => "/$v->{id}", tattr $v;
+            small_ id => 'ulist_notes_'.$v->{id}, $v->{notes} if $v->{notes} || $own;
+        };
+        td_ class => 'tc_dev',   sub {
+            join_ ' & ', sub {
+                a_ href => "/$_->{id}", tattr $_;
+            }, $v->{developers}->@*;
+        } if $opt->{s}->vis('developer');
+
+        td_ class => 'tc_added',    fmtdate $v->{added},     'compact' if $opt->{s}->vis('added');
+        td_ class => 'tc_modified', fmtdate $v->{lastmod},   'compact' if $opt->{s}->vis('modified');
+
+        td_ class => 'tc_date', !$own ? () :
+            widget(UListStartDate => { vid => $v->{id}, started => int(($v->{started}||0) =~ s/-//rg) }), sub {
+            txt_ $v->{started}||'';
+        } if $opt->{s}->vis('started');
+
+        td_ class => 'tc_date', !$own ? () :
+            widget(UListFinishDate => { vid => $v->{id}, finished => int(($v->{finished}||0) =~ s/-//rg) }), sub {
+            txt_ $v->{finished}||'';
+        } if $opt->{s}->vis('finished');
+
+        td_ class => 'tc_mylength', sub {
+            my $l = sub { !$v->{mylength_count} ? txt_ '-' : vnlength_ $v->{mylength_sum}, $v->{mylength_count} };
+            $own ? a_ href => "/$v->{id}/lengthvote", $l : $l->();
+        } if $opt->{s}->vis('mylength');
+
+        td_ class => 'tc_rel', sub { rdate_ $v->{c_released} } if $opt->{s}->vis('released');
+        td_ class => 'tc_length',sub { VNWeb::VN::List::len_($v) } if $opt->{s}->vis('length');
+    };
+}
+
+
+sub listing_ {
+    my($uid, $own, $opt, $labels, $url) = @_;
+    my $priv = ulists_priv $uid;
+
+    my @l = grep $_ > 0 && $_ != 7, $opt->{l}->@*;
+    my $unlabeled = grep $_ == 0, $opt->{l}->@*;
+    my $voted = grep $_ == 7, $opt->{l}->@*;
+
+    my @where_vns = (
+              @l ? SQL('uv.labels &&', \@l, '::smallint[]') : (),
+      $unlabeled ? SQL("uv.labels IN('{}','{7}')") : (),
+          $voted ? SQL('uv.vote IS NOT NULL') : ()
+    );
+
+    my $where = AND
+        SQL('uv.uid =', $uid),
+        $opt->{f}->WHERE(),
+        $opt->{q}->WHERE('v', 'v.id'),
+        $priv ? () : 'NOT uv.c_private AND NOT v.hidden',
+        @where_vns ? OR(@where_vns) : (),
+        defined($opt->{ch}) ? SQL 'match_firstchar(v.sorttitle, ', $opt->{ch}, ')' : ();
+
+    my $count = fu->SQL('SELECT count(*) FROM ulist_vns uv JOIN', VNT, 'v ON v.id = uv.vid WHERE', $where)->val;
+
+    my $lst = fu->SQL(
+        'SELECT v.id, v.title, uv.vote, uv.notes, uv.labels, uv.started, uv.finished, uv.added, uv.lastmod, uv.vote_date
+              , v.c_released, v.c_average, v.c_rating, v.c_votecount
+              , ', VNIMAGE, ', v.c_platforms AS platforms, v.c_languages AS lang',
+                 $opt->{s}->vis('length') ? ', v.length, v.c_length, v.c_lengthnum' : (),
+                 $opt->{s}->vis('mylength') ? ', ul.sum AS mylength_sum, ul.count AS mylength_count' : (), '
+           FROM ulist_vns uv
+           JOIN', VNT, 'v ON v.id = uv.vid',
+                  $opt->{s}->vis('mylength') || $opt->{s}->sorted('mylength')
+                  ? SQL 'LEFT JOIN (SELECT vid, SUM(length::int), COUNT(*) FROM vn_length_votes WHERE uid =', $uid, 'GROUP BY vid) ul(vid, sum, count) ON ul.vid = uv.vid'
+                  : (), '
+          WHERE', $where, '
+          ORDER BY', $opt->{s}->ORDER(), 'NULLS LAST, v.sorttitle
+          LIMIT', $opt->{s}->results, 'OFFSET', $opt->{s}->results*($opt->{p}-1)
+    )->allh;
+
+    fu->enrich(set => 'rlist', sub { SQL '
+        SELECT rv.vid, ARRAY[
+                  COUNT(*) FILTER(WHERE rl.status = 0),
+                  COUNT(*) FILTER(WHERE rl.status = 1),
+                  COUNT(*) FILTER(WHERE rl.status = 2),
+                  COUNT(*) FILTER(WHERE rl.status = 3),
+                  COUNT(*) FILTER(WHERE rl.status = 4)
+               ] rlist
+          FROM rlists rl
+          JOIN releases_vn rv ON rv.id = rl.rid
+         WHERE rl.uid =', $uid, '
+           AND rv.vid', IN $_, '
+         GROUP BY rv.vid'
+    }, $lst) if $opt->{s}->rows;
+    VNWeb::VN::List::enrich_listing($own, $opt, $lst);
+
+    return VNWeb::VN::List::listing_($opt, $lst, $count, 0, $labels, $own) if !$opt->{s}->rows;
+
+    # TODO: Consolidate the 'rows' listing with VN::List as well
+    paginate_ $url, $opt->{p}, [$count, $opt->{s}->results], 't', $opt->{s};
+    article_ class => 'browse ulist', sub {
+        table_ class => 'stripe', sub {
+            thead_ sub { tr_ sub {
+                td_ class => 'tc_ulist', '';
+                td_ class => 'tc_voted',    sub { txt_ 'Vote date';   sortable_ 'voted',    $opt, $url } if $opt->{s}->vis('voted');
+                td_ class => 'tc_vote',     sub { txt_ 'Vote';        sortable_ 'vote',     $opt, $url } if $opt->{s}->vis('vote');
+                td_ class => 'tc_pop',      sub { txt_ 'Popularity';  sortable_ 'popularity', $opt, $url } if $opt->{s}->vis('popularity');
+                td_ class => 'tc_rating',   sub { txt_ 'Rating';      sortable_ 'rating',   $opt, $url } if $opt->{s}->vis('rating');
+                td_ class => 'tc_average',  sub { txt_ 'Average';     sortable_ 'average',    $opt, $url } if $opt->{s}->vis('average');
+                td_ class => 'tc_labels',   sub { txt_ 'Labels';      sortable_ 'label',    $opt, $url } if $opt->{s}->vis('label');
+                td_ class => 'tc_title',    sub { txt_ 'Title';       sortable_ 'title',    $opt, $url; debug_ $lst };
+                td_ class => 'tc_dev',      'Developer' if $opt->{s}->vis('developer');
+                td_ class => 'tc_added',    sub { txt_ 'Added';       sortable_ 'added',    $opt, $url } if $opt->{s}->vis('added');
+                td_ class => 'tc_modified', sub { txt_ 'Modified';    sortable_ 'modified', $opt, $url } if $opt->{s}->vis('modified');
+                td_ class => 'tc_started',  sub { txt_ 'Start date';  sortable_ 'started',  $opt, $url } if $opt->{s}->vis('started');
+                td_ class => 'tc_finished', sub { txt_ 'Finish date'; sortable_ 'finished', $opt, $url } if $opt->{s}->vis('finished');
+                td_ class => 'tc_mylength', sub { txt_ 'Play time';   sortable_ 'mylength', $opt, $url } if $opt->{s}->vis('mylength');
+                td_ class => 'tc_rel',      sub { txt_ 'Release date';sortable_ 'released', $opt, $url } if $opt->{s}->vis('released');
+                td_ class => 'tc_length',   'Length' if $opt->{s}->vis('length');
+            }};
+            vn_ $own, $priv, $opt, $_, $lst->[$_], $labels for (0..$#$lst);
+        };
+    };
+    paginate_ $url, $opt->{p}, [$count, $opt->{s}->results], 'b';
+}
+
+sub ownlistopts_($u) {
+    div_ class => 'hidden managelabels', widget('UListManageLabels', {}), '';
+    div_ class => 'hidden savedefault', sub {
+        strong_ 'Save as default'; br_;
+        txt_ 'This will change the default label selection, visible columns and table sorting options for the selected page to the currently applied settings.';
+        txt_ ' The saved view will also apply to users visiting your lists.';
+        br_;
+        txt_ '(If you just changed the label filters, make sure to hit "Update filters" before saving)';
+        br_;
+        label_ sub { input_ form => 'savedefaultfrm', type => 'radio', name => 'field', value => 'votes';  txt_ ' My votes' }; br_;
+        label_ sub { input_ form => 'savedefaultfrm', type => 'radio', name => 'field', value => 'vnlist', checked => 'checked'; txt_ ' My visual novel list' }; br_;
+        label_ sub { input_ form => 'savedefaultfrm', type => 'radio', name => 'field', value => 'wish';   txt_ ' My wishlist' }; br_;
+        input_ form => 'savedefaultfrm', type => 'submit', value => 'Save';
+    };
+    div_ class => 'hidden exportlist', sub {
+        strong_ 'Export your list';
+        br_;
+        txt_ 'This function will export all visual novels and releases in your list, even those marked as private.';
+        br_;
+        txt_ 'This export also includes your play time votes and reviews.';
+        br_;
+        txt_ '(There is currently no import function, more export options may be added later)';
+        br_;
+        br_;
+        a_ href => "/$u->{id}/list-export/xml", "Download XML export.";
+    };
+}
+
+FU::get qr{/$RE{uid}/ulist}, sub($uid) {
+    my $u = fu->SQL('
+        SELECT u.id,', USER, ', ulist_votes, ulist_vnlist, ulist_wish
+          FROM users u JOIN users_prefs up ON up.id = u.id
+         WHERE u.id =', $uid
+    )->rowh or fu->notfound;
+
+    my $own = auth && auth->uid eq $u->{id};
+    my $labels = ulist_filtlabels $u->{id}, 1;
+    $_->{delete} = undef for @$labels;
+
+    my($opt, $opt_labels) = opt $u, $labels;
+    my sub url { '?'.query_encode({%$opt, @_}) }
+
+    # This page has 3 user tabs: list, wish and votes; Select the appropriate active tab based on label filters.
+    my $num_core_labels = grep $_ < 10, keys %$opt_labels;
+    my $tab = $num_core_labels == 1 && $opt_labels->{7} ? 'votes'
+            : $num_core_labels == 1 && $opt_labels->{5} ? 'wish' : 'list';
+
+    my $title = $own ? 'My list' : user_displayname($u)."'s list";
+    framework_ title => $title, dbobj => $u, tab => $tab, js => 1,
+        $own ? ( pagevars => {
+            labels => [ map [$_->{id}*1, $_->{label}, $_->{private}?\1:\0, $_->{count}], grep $_->{id}>0, @$labels ],
+            voteprivate => (map \($_->{private}?1:0), grep $_->{id} == 7, @$labels),
+        } ) : (),
+    sub {
+        my $empty = !grep $_->{count}, @$labels;
+        form_ method => 'POST', id => 'savedefaultfrm', action => "/u/ulist-savedefault", sub {
+            input_ type => 'hidden', name => 'opts', value => FU::Util::json_format($SAVED_OPTS->coerce(
+                { l => $opt->{l}, mul => $opt->{mul}, s => $opt->{s}->enc_query(), f => $opt->{f}->enc_query() },
+            ));
+        } if !$empty && $own;
+        form_ method => 'get', sub {
+            article_ sub {
+                h1_ $title;
+                if($empty) {
+                    p_ $own
+                        ? 'Your list is empty! You can add visual novels to your list from the visual novel pages.'
+                        : user_displayname($u).' does not have any visible visual novels in their list.';
+                } else {
+                    filters_ $own, $labels, $opt, $opt_labels, \&url;
+                    ownlistopts_ $u if $own;
+                }
+            };
+            listing_ $u->{id}, $own, $opt, $labels, \&url if !$empty;
+        }
+    };
+};
+
+FU::post '/u/ulist-savedefault', sub {
+    my $data = fu->formdata(
+        opts  => {},
+        field => { enum => [qw/ vnlist votes wish /] },
+    );
+    fu->denied if !auth;
+    my $opts = $SAVED_OPTS->validate(FU::Util::json_parse($data->{opts}));
+    fu->SQL('UPDATE users_prefs', SET({"ulist_$data->{field}", $opts}), 'WHERE id =', auth->uid)->exec;
+    my $tab = $data->{field} eq 'wish' ? 'wishlist' : $data->{field};
+    fu->redirect(tempget => '/'.auth->uid."/ulist?$tab=1");
+};
+
+
+# Redirects for old URLs
+FU::get qr{/$RE{uid}/votes}, sub($uid) { fu->redirect(perm => "/$uid/ulist?votes=1") };
+FU::get qr{/$RE{uid}/list},  sub($uid) { fu->redirect(perm => "/$uid/ulist?vnlist=1") };
+FU::get qr{/$RE{uid}/wish},  sub($uid) { fu->redirect(perm => "/$uid/ulist?wishlist=1") };
+
+
+1;

@@ -1,0 +1,71 @@
+# This is for user-visible changes only and powers the list at https://vndb.org/changes
+20260303 New-ish contributors are now marked as a green link in edit histories
+20260110 Add "Has image" filter to [url=/r]release search[/url]
+20260107 VN list export function now also exports reviews
+20251206 Add status icons for supported external links on release pages
+20251206 Add message to keep dead shop links when editing a release
+20251205 Add [url=https://www.gogdb.org/]GOG DB[/url] links for releases (requires crawling, will take a few days for all links to show up)
+20251124 Increase maximum number of notifications from 500 to 10k
+20251122 Add notification priorities, more advanced settings and revamped UI
+20251122 Add timestamp tooltips to ".. ago" columns
+20251017 Add multilanguage character names + romanized & spoiler aliases (t24112)
+20251008 Add Bosnian language (t950.1988)
+20251002 Add [url=/r/engines]searchable engine list[/url] with (mod-editable) description and status fields.
+20250917 Add support for Johren & Kagura Games links for releases.
+20250911 Add button to override the other edit when an edit conflict has been detected.
+20250811 Add Estonian language (t950.1964)
+20250810 Improve normalization for Apple App Store links and add link checker
+20250803 Anime info fetched from AniDB now includes links to MyAnimeList (takes a month before all entries have been updated)
+20250802 Add new framework for parsing and normalizing external links; Some links now have better formatting and there's a few minor differences in edit form behavior.
+20250730 PlayAsia links can now be added to releases, automatic JAN/EAN/UPC lookup has been disabled.
+20250724 Reduce image flagging vote weight for users fewer than 30 flagged images.
+20250724 Require newly uploaded images to be flagged before submitting the edit form.
+20250724 Attempt to catch and prevent adding screenshots to release entries.
+20250719 Migrate VN entries to the new external links system; minor UI differences.
+20250719 Add support for Fantia & Nijie links for staff & producers.
+20250701 Detect edit conflicts and display an error when attempting to submit the form
+20250619 Replaced the "My notifications" link with a bell icon
+20250619 Add notifications for direct replies and user ID mentions.
+20250618 Add reply link on forum posts and format links to user and post IDs.
+20250617 Add own play time column to length vote browser (t950.1929)
+20250612 Support multiple playthroughs for play time voting and add play time column to user VN lists.
+20250612 Add support for BOOTH links for staff & producers.
+20250609 Add support for Ci-en links for staff & producers.
+20250605 Add language selection to play time vote submission form.
+20250605 Add Tumblr links for producer entries.
+20250512 Add type field for staff entries.
+20250507 Add bunch of link formats for staff & producers: VGMdb org, Mobygames company, Steam curator, Fanbox, Weibo, Afdian & Bilibili.
+20250426 Add advanced animation filters to release search.
+20250417 Rewritten search filter interface, has some UI differences.
+20250410 Add Nintendo Switch 2 platform
+20250405 Release edit form: Allow voiced and resolution fields to be set for patches (t950.1853)
+20250403 Add full-screen overlay function to the image flagging interface
+20250401 Create [url=https://vndb.moe/]VNDB.moe[/url] as safer VNDB mirror (t23215)
+20250329 Add Symphonic Rain skin
+20250327 Add Galician language
+20250320 Release edit form: disallow uploading package images when release date is in the future (t950.1843)
+20250316 VN list management interface rewritten, has some UI differences (t23157)
+20250312 Add next-image-preload functionality to JS image viewer.
+20250309 "Manage labels" form rewritten, minor UI differences.
+20250307 Tag vote form rewritten to the new framework, few minor improvements: delete button, tab close confirmation and links open in a new tab.
+20250306 Thread create/edit form rewritten to the new framework; differences should be minor.
+20250304 Producer/staff edit: Support Bluesky links
+20250304 Add Nepali language
+20250225 Add next/prev buttons to release images overlay (t950.1835)
+20250222 VN edit: Add button to move staff entries between editions (t950.1829)
+20250222 Fix search result count to exclude deleted items (t2520.945)
+20250209 Sort media list in alphabetical order (t950.1818)
+20250202 Add Kazakh language.
+20250202 Characters: Allow gender identity (t22752) to be set for all characters.
+20250122 Staff: Add "same as that producer entry" field.
+20250120 Producer/staff edit: Support alternative Facebook link format (t950.1808).
+20250120 VN edit: Fix error when adding VN relation with default (sequel) type.
+20250120 Database editing: Adjust heading of edit summary input and disallow punctuation-only summaries.
+20250119 Add this changelog.
+20250118 Rewritten VN edit form (t12882.55).
+20250118 Producer/staff edit: Support alternative tumblr link formats (t12882.53).
+20250115 Add email domain typo fix suggestions to sign-up & email change form.
+20250115 Producer/staff edit: Support multiple Xitter links (t950.1802).
+20250114 Hide random quotes from footer for search engines and when visiting from an external site.
+20250114 Producer/staff edit: Support alternative wikidata link format (t950.1799).
+20250111 Producer/staff edit: Support alternative itch.io/profile/<name> link format.

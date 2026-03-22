@@ -1,0 +1,234 @@
+package VNWeb::Images::Lib;
+
+use VNWeb::Prelude;
+use Exporter 'import';
+
+our @EXPORT = qw/$IMGSCHEMA enrich_image validate_token image_flagging_display image_hidden image_ enrich_image_obj/;
+
+
+# Schema for image flagging data.
+our $IMGSCHEMA = {
+    id              => { vndbid => ['ch','cv','sf'] },
+    token           => { default => undef },
+    width           => { uint => 1 },
+    height          => { uint => 1 },
+    votecount       => { uint => 1 },
+    sexual          => { uint => 1, range => [0,2] },
+    sexual_avg      => { num => 1, default => undef },
+    sexual_stddev   => { num => 1, default => undef },
+    violence        => { uint => 1, range => [0,2] },
+    violence_avg    => { num => 1, default => undef },
+    violence_stddev => { num => 1, default => undef },
+    my_sexual       => { uint => 1, default => undef },
+    my_violence     => { uint => 1, default => undef },
+    my_overrule     => { anybool => 1 },
+    entries         => { aoh => {
+        id       => {},
+        title    => {},
+    } },
+    votes           => { aoh => {
+        user     => {},
+        uid      => { vndbid => 'u', default => undef },
+        sexual   => { uint => 1 },
+        violence => { uint => 1 },
+        ignore   => { anybool => 1 },
+    } },
+};
+
+
+my @SEX = qw/Safe Suggestive Explicit/;
+my @VIO = qw/Tame Violent    Brutal  /;
+
+sub set_verdict {
+    my($i) = @_;
+    # Still no clue why I chose these thresholds, but they seem to work.
+    my $minvotes = config->{moe} ? 2 : 1;
+    $i->{sexual}   = $i->{votecount} < $minvotes ? 2 : $i->{sexual_avg}   > 1.3 ? 2 : $i->{sexual_avg}   > 0.4 ? 1 : 0;
+    $i->{violence} = $i->{votecount} < $minvotes ? 2 : $i->{violence_avg} > 1.3 ? 2 : $i->{violence_avg} > 0.4 ? 1 : 0;
+}
+
+
+# Enrich images so that they match the above $IMGSCHEMA format.
+#
+# Also adds signed tokens to the image list - indicating that the current user
+# is permitted to vote on these images. These tokens ensure that non-moderators
+# can only vote on images that they have been randomly assigned, thus
+# preventing possible abuse when a single person uses multiple accounts to
+# influence the rating of a single image.
+sub enrich_image($canvote, $l) {
+    $canvote ||= !config->{read_only} && auth->permDbmod;
+    my $canownvote = !config->{read_only} && auth->permImgvote && !global_settings->{lockdown_edit};
+
+    fu->enrich(merge => 1, SQL('
+      SELECT i.id, i.width, i.height, i.c_votecount AS votecount
+           , i.c_sexual_avg::real/100 AS sexual_avg, i.c_sexual_stddev::real/100 AS sexual_stddev
+           , i.c_violence_avg::real/100 AS violence_avg, i.c_violence_stddev::real/100 AS violence_stddev
+           , iv.sexual AS my_sexual, iv.violence AS my_violence
+           , COALESCE(EXISTS(SELECT 1 FROM image_votes iv0 WHERE iv0.id = i.id AND iv0.ignore) AND NOT iv.ignore, FALSE) AS my_overrule
+           , i.uploader IS NOT DISTINCT FROM', auth->uid, ' AS own
+        FROM images i
+        LEFT JOIN image_votes iv ON iv.id = i.id AND iv.uid =', auth->uid, '
+       WHERE i.id'
+    ), $l);
+
+    fu->enrich(aoh => entries => sub {
+        my @cv = grep /^cv/, @$_;
+        my @sf = grep /^sf/, @$_;
+        my @ch = grep /^ch/, @$_;
+        INTERSPERSE 'UNION ALL',
+          @cv ? SQL('SELECT image, id, title[1+1] AS title
+                       FROM', VNT, 'v
+                      WHERE NOT hidden AND image', IN \@cv) : (),
+          @cv ? SQL('SELECT ri.img, ri.id, r.title[1+1] AS title
+                       FROM releases_images ri
+                       JOIN', RELEASEST, 'r ON r.id = ri.id
+                      WHERE NOT r.hidden AND ri.img', IN \@cv) : (),
+          @sf ? SQL('SELECT vs.scr, v.id, v.title[1+1] AS title
+                       FROM vn_screenshots vs
+                       JOIN', VNT, 'v ON v.id = vs.id
+                      WHERE NOT v.hidden AND vs.scr', IN \@sf) : (),
+          @ch ? SQL('SELECT image, id, title[1+1] AS title
+                       FROM', CHARST, 'c
+                      WHERE NOT hidden AND image', IN \@ch) : (),
+    }, $l);
+
+    fu->enrich(aoh => 'votes', sub { SQL '
+        SELECT iv.id, iv.uid, iv.sexual, iv.violence, iv.ignore OR (u.id IS NOT NULL AND (NOT u.perm_imgvote OR u.c_imgvotes <= 30)) AS ignore, ', USER, '
+          FROM image_votes iv
+          LEFT JOIN users u ON u.id = iv.uid
+         WHERE iv.id', IN $_,
+               auth ? ('AND (iv.uid IS NULL OR iv.uid <> ', auth->uid, ')') : (), '
+         ORDER BY u.username'
+    }, $l);
+
+    for(grep defined $_->{width}, @$l) {
+        set_verdict $_;
+        for my $v ($_->{votes}->@*) {
+            $v->{user} = fragment sub { user_ $v }; # Easier than duplicating user_() in JS
+            utf8::decode($v->{user});
+            delete $v->{$_} for grep /^user_/, keys %$v;
+        }
+        $_->{token} = $canvote || ($canownvote && ($_->{own} || defined $_->{my_sexual})) ? auth->csrftoken(0, "imgvote-$_->{id}") : undef;
+        delete $_->{own};
+    }
+}
+
+# Validates the token generated by enrich_image;
+sub validate_token($l) {
+    my $ok = 1;
+    $ok &&= $_->{token} && auth->csrfcheck($_->{token}, "imgvote-$_->{id}") for @$l;
+    $ok;
+}
+
+
+# Returns a string like 'Not flagged' or 'Safe / Tame (5)'
+sub image_flagging_display($img, $small=0) {
+    !$img->{votecount} ? 'Not flagged' :
+                $small ? sprintf '%s / %s', $SEX[$img->{sexual}], $VIO[$img->{violence}]
+                       : sprintf '%s / %s (%d)', $SEX[$img->{sexual}], $VIO[$img->{violence}], $img->{votecount}
+}
+
+
+# Returns whether the image is hidden according to the user's preferences.
+# Return values:
+#   0 -> visible
+#   4 -> hidden for some reason
+#   5 -> hidden because of sexual flag
+#   6 -> hidden because of violence flag
+#   7 -> hidden because both
+sub image_hidden($img) {
+    my($sex,$vio) = $img->@{'sexual', 'violence'};
+    my $sexp = auth->pref('max_sexual')||0;
+    my $viop = auth->pref('max_violence')||0;
+    my $sexh = $sex > $sexp && $sexp >= 0 if $img->{votecount};
+    my $vioh = $vio > $viop if $img->{votecount};
+    my $hidden = $sexp < 0 || $sexh || $vioh || (!$img->{votecount} && ($sexp < 2 || $viop < 2));
+    $hidden ? 4 + ($sexh?1:0)+($vioh?2:0) : 0;
+}
+
+
+# Display (or not) an image with preference toggle and hover-information.
+# Given $img is assumed to be an object generated by enrich_image_obj().
+# %opt:
+#   alt     -> alt text
+#   width   -> if different from original image
+#   height  -> if different from original image
+#   url     -> link the image to a page (if not hidden by settings)
+#   thumb   -> 0/1, show thumbnail and link to full-size image; conflicts with 'url'
+#   cat     -> iv category
+#   overlay -> 0/1, show the image flagging overlay (default 1)
+#   extra   -> CODE ref, extra stuff to put after the image
+sub image_($img, %opt) {
+    return p_ 'No image' if !$img;
+    return p_ 'Image not available' if config->{moe} && ($img->{sexual} || $img->{violence});
+
+    my($w,$h) = $opt{width} ? @opt{'width','height'} : @{$img}{'width', 'height'};
+    if($opt{thumb}) {
+        ($w,$h) = imgsize $w, $h, config->{ $img->{id} =~ /^cv/ ? 'cv_size' : $img->{id} =~ /^sf/ ? 'scr_size' : 'ch_size' }->@*;
+        $opt{url} = imgurl $img->{id} if $w < $img->{width} || $h < $img->{height};
+    }
+
+    my $hidden = image_hidden $img;
+    my($sex,$vio) = $img->@{'sexual', 'violence'};
+    my $hide_on_click = $sex || $vio || !$img->{votecount} || (auth->pref('max_sexual')||0) < 0;
+    my $small = $w*$h < 20000;
+
+    fu->{imghover_id} //= 0;
+    my $id = fu->{imghover_id}++;
+
+    fu->{js}{basic} = 1 if $opt{thumb};
+
+    my sub _img {
+        img_ src => thumburl($img), width => $w, height => $h, $opt{alt} ? (alt => $opt{alt}) : (), undef;
+    }
+    my sub _content {
+        a_ $opt{thumb} ? imgiv($img, $opt{cat}) : (href => $opt{url}), \&_img if $opt{url};
+        _img() if !$opt{url};
+
+        if(!config->{moe} && !exists $opt{overlay}) {
+            a_ class => 'imghover--overlay', viewset("/$img->{id}", show_nsfw=>1), image_flagging_display $img, $small if auth;
+            span_ class => 'imghover--overlay', image_flagging_display $img, $small if !auth;
+        }
+        $opt{extra} && $opt{extra}->();
+    }
+
+    details_ class => 'imghover', open => $hidden ? undef : 'open', style => "width: ${w}px; height: ${h}px", sub {
+        summary_ sub {
+            div_ sub {
+                if($img->{votecount}) {
+                    if(!$small) {
+                        txt_ 'This image has been flagged as:';
+                        br_; br_;
+                    }
+                    txt_ 'Sexual: '; $hidden & 1 ? b_ $SEX[$sex] : txt_ $SEX[$sex];
+                    br_;
+                    txt_ 'Violence: '; $hidden & 2 ? b_ $VIO[$vio] : txt_ $VIO[$vio];
+                } else {
+                    txt_ 'This image has not yet been flagged';
+                }
+                if(!$small) {
+                    br_; br_;
+                    span_ class => 'fake_link', 'Show me anyway';
+                    if ($h > 200) {
+                        br_; br_;
+                        small_ 'This warning can be disabled in your account';
+                    }
+                }
+            };
+            span_ 'x';
+        };
+        _content();
+    } if $hide_on_click;
+    div_ class => 'imghover', style => "width: ${w}px; height: ${h}px", \&_content if !$hide_on_click;
+}
+
+
+sub enrich_image_obj($field, $l) {
+    fu->enrich(seth => $field, key => $field,
+        'SELECT id, id, width, height, c_votecount AS votecount, c_sexual_avg::real/100 AS sexual_avg, c_violence_avg::real/100 AS violence_avg
+           FROM images WHERE id', $l
+    );
+    set_verdict $_ for grep $_, map $_->{$field}, @$l;
+}
+
+1;

@@ -1,0 +1,1145 @@
+package VNWeb::VN::Page;
+
+use VNWeb::Prelude;
+use VNWeb::Releases::Lib;
+use VNWeb::VN::Lib;
+use VNWeb::Images::Lib qw/image_flagging_display image_ enrich_image_obj/;
+use VNWeb::ULists::Lib 'ulists_widget_full_data';
+use VNDB::Func 'fmtrating';
+
+
+# Enrich everything necessary to at least render infobox_() and tabs_().
+# Also used by Chars::VNTab, Reviews::VNTab and VN::Quotes
+sub enrich_vn($v, $revonly=0) {
+    $v->{title} = titleprefs_obj $v->{olang}, $v->{titles};
+    fu->enrich(merge => 1, SQL('SELECT id, c_votecount, c_length, c_lengthnum, c_image, c_imgfirst, c_imglast,', VNIMAGE, 'FROM vn WHERE id'), [$v]);
+    enrich_vislinks v => 0, $v;
+    enrich_vnimage [$v];
+    enrich_image_obj scr => $v->{screenshots};
+
+    $v->{relations} = [ grep length $_->{title}, $v->{relations}->@* ];
+
+    # The queries below are not relevant for revisions
+    return if $revonly;
+
+    # This fetches rather more information than necessary for infobox_(), but it'll have to do.
+    # (And we'll need it for the releases tab anyway)
+    $v->{releases} = fu->SQL('
+        SELECT r.id, rv.rtype, r.patch, r.released, r.c_bundle
+          FROM releases r
+          JOIN releases_vn rv ON rv.id = r.id
+         WHERE NOT r.hidden AND rv.vid =', $v->{id}
+    )->allh;
+    enrich_vislinks r => 0, $v->{releases};
+
+    $v->{myreview} = !!auth && fu->SQL('SELECT id FROM reviews WHERE uid =', auth->uid, 'AND vid =', $v->{id})->val;
+
+    # short/medium/long are only used for Reviews::VNTab, but might as well get them here.
+    $v->{reviews} = fu->SQL('
+        SELECT COUNT(*) FILTER(WHERE length = 0) AS short
+             , COUNT(*) FILTER(WHERE length = 1) AS medium
+             , COUNT(*) FILTER(WHERE length = 1+1) AS long
+             , COUNT(*) AS total
+          FROM reviews
+         WHERE NOT c_flagged AND vid =', $v->{id}
+    )->rowh;
+
+    $v->{relimgs} = fu->SQL("
+        SELECT COUNT(DISTINCT img) FILTER(WHERE ri.itype IN('dig', 'pkgfront')) AS covers
+             , COUNT(DISTINCT img) AS total
+          FROM releases r
+          JOIN releases_vn rv ON rv.id = r.id
+          JOIN releases_images ri ON ri.id = r.id
+         WHERE NOT r.hidden AND rv.vid =", $v->{id}, '
+           AND (ri.vid IS NULL OR ri.vid =', $v->{id}, ')'
+    )->rowh;
+
+    $v->{tags} = !prefs()->{has_tagprefs} ? fu->SQL('
+        SELECT t.id, t.name, t.cat, tv.rating, tv.count, tv.spoiler, tv.lie
+          FROM tags t
+          JOIN tags_vn_direct tv ON t.id = tv.tag
+         WHERE tv.vid =', $v->{id}, '
+         ORDER BY rating DESC, t.name'
+    )->allh : fu->SQL(
+        # Monster of a query, but tag overrides are a bit complicated:
+        # - We need to find the shortest path from a tag applied to the VN to a
+        #   parent in users_prefs_tags, and use those preferences. That's what
+        #   tag_direct does.
+        # - If the user has a tag marked as "Always show" but hasn't checked
+        #   "also apply to child tags", then we need to look for any child tags
+        #   and inject their parent if said parent hasn't been directly applied.
+        #   That's what tag_indirect does.
+       'WITH RECURSIVE tag_overrides (tid, spoil, color, childs, lvl) AS (
+          SELECT tid, spoil, color, childs, 0 FROM users_prefs_tags WHERE id =', auth->uid, '
+           UNION ALL
+          SELECT tp.id, x.spoil, x.color, true, lvl+1
+            FROM tag_overrides x
+            JOIN tags_parents tp ON tp.parent = x.tid
+           WHERE x.childs
+        ), tag_overrides_grouped (tid, spoil, color) AS (
+          SELECT DISTINCT ON(tid) tid, spoil, color FROM tag_overrides ORDER BY tid, lvl
+        ), tag_direct (tid, rating, count, spoiler, lie, override, color) AS (
+          SELECT t.tag, t.rating, t.count, t.spoiler, t.lie, x.spoil, x.color
+            FROM tags_vn_direct t
+            LEFT JOIN tag_overrides_grouped x ON x.tid = t.tag
+           WHERE t.vid =', $v->{id}, 'AND x.spoil IS DISTINCT FROM 1+1+1
+        ), tag_indirect (tid, rating, count, spoiler, lie, override, color) AS (
+          SELECT t.tag, t.rating, 0::smallint, t.spoiler, t.lie, x.spoil, x.color
+            FROM tags_vn_inherit t
+            JOIN users_prefs_tags x ON x.tid = t.tag
+           WHERE t.vid =', $v->{id}, 'AND x.id =', auth->uid, 'AND NOT x.childs AND x.spoil = 0
+             AND NOT EXISTS(SELECT 1 FROM tag_direct d WHERE d.tid = t.tag)
+        ) SELECT t.id, t.name, t.cat, d.rating, d.count, d.spoiler, d.lie, d.override, d.color
+            FROM tags t
+            JOIN (SELECT * FROM tag_direct UNION ALL SELECT * FROM tag_indirect) d ON d.tid = t.id
+           ORDER BY d.rating DESC, t.name'
+    )->allh;
+}
+
+
+# Enrich everything necessary for rev_() (includes enrich_vn())
+sub enrich_item($v, $full=0, $rev=0) {
+    enrich_vn $v, !$full;
+    enrich_image_obj image => [$v] if $rev;
+}
+
+
+sub og($v) {
+    +{
+        description => bb_format($v->{description}, text => 1),
+        image => $v->{vnimage} && !$v->{vnimage}{sexual} && !$v->{vnimage}{violence} ? imgurl($v->{vnimage}{id}) :
+                 [map $_->{scr}{sexual}||$_->{scr}{violence}?():(imgurl($_->{scr}{id})), $v->{screenshots}->@*]->[0]
+    }
+}
+
+
+sub prefs {
+    state $default = {
+        vnrel_langs   => \%LANGUAGE, vnrel_olang   => 1, vnrel_mtl     => 0,
+        staffed_langs => \%LANGUAGE, staffed_olang => 1, staffed_unoff => 0,
+        has_tagprefs => 0,
+    };
+    fu->{vnpage_prefs} //= auth ? do {
+        my $v = fu->SQL('
+            SELECT vnrel_langs, vnrel_olang, vnrel_mtl
+                 , staffed_langs, staffed_olang, staffed_unoff
+                 , EXISTS(SELECT 1 FROM users_prefs_tags WHERE id =', auth->uid, ') AS has_tagprefs
+              FROM users_prefs
+             WHERE id =', auth->uid
+        )->rowh;
+        $v->{vnrel_langs} = $v->{vnrel_langs} ? { map +($_,1), $v->{vnrel_langs}->@* } : \%LANGUAGE;
+        $v->{staffed_langs} = $v->{staffed_langs} ? { map +($_,1), $v->{staffed_langs}->@* } : \%LANGUAGE;
+        $v
+    } : $default;
+}
+
+
+# The voting and review options are hidden if nothing has been released yet.
+sub canvote($v) {
+    $v->{_canvote} //= do {
+        my $minreleased = min grep $_, map $_->{released}, $v->{releases}->@*;
+        $minreleased && $minreleased <= strftime('%Y%m%d', gmtime)
+    };
+}
+
+
+sub rev_($v) {
+    revision_ $v, sub($e) { enrich_item $e, 0, 1 },
+        [ titles      => 'Title(s)',      txt => sub {
+            "[$_->{lang}] $_->{title}".($_->{latin} ? " / $_->{latin}" : '').($_->{official} ? '' : ' (unofficial)')
+        }],
+        [ alias       => 'Alias'          ],
+        [ olang       => 'Original language', fmt => \%LANGUAGE ],
+        [ description => 'Description'    ],
+        [ devstatus   => 'Development status',fmt => \%DEVSTATUS ],
+        [ length      => 'Length',        fmt => \%VN_LENGTH ],
+        [ editions    => 'Editions',      fmt => sub {
+            abbr_ class => "icon-lang-$_->{lang}", title => $LANGUAGE{$_->{lang}}{txt}, '' if $_->{lang};
+            txt_ $_->{name};
+            small_ ' (unofficial)' if !$_->{official};
+        }],
+        [ staff       => 'Credits',       fmt => sub {
+            my $eid = $_->{eid};
+            my $e = defined $eid && (grep $eid == $_->{eid}, $_[0]{editions}->@*)[0];
+            txt_ "[$e->{name}] " if $e;
+            a_ href => "/$_->{sid}", tattr $_ if $_->{sid};
+            small_ '[removed alias]' if !$_->{sid};
+            txt_ " [$CREDIT_TYPE{$_->{role}}]";
+            txt_ " [$_->{note}]" if $_->{note};
+        }],
+        [ seiyuu      => 'Seiyuu',        fmt => sub {
+            a_ href => "/$_->{sid}", tattr $_ if $_->{sid};
+            small_ '[removed alias]' if !$_->{sid};
+            txt_ ' as ';
+            a_ href => "/$_->{cid}", tattr $_->{char_title};
+            txt_ " [$_->{note}]" if $_->{note};
+        }],
+        [ relations   => 'Relations',     fmt => sub {
+            txt_ sprintf '[%s] %s: ', $_->{official} ? 'official' : 'unofficial', $VN_RELATION{$_->{relation}}{txt};
+            a_ href => "/$_->{vid}", tattr $_;
+        }],
+        [ anime       => 'Anime',         fmt => sub { a_ href => "https://anidb.net/anime/$_->{aid}", "a$_->{aid}" }],
+        [ screenshots => 'Screenshots',   fmt => sub {
+            my $rev = $_[0]{chid} == $v->{chid} ? 'new' : 'old';
+            txt_ '[';
+            a_ href => "/$_->{rid}", $_->{rid} if $_->{rid};
+            txt_ 'no release' if !$_->{rid};
+            txt_ '] ';
+            a_ imgiv($_->{scr}, $rev), $_->{scr}{id};
+            txt_ " [$_->{scr}{width}x$_->{scr}{height}; ";
+            a_ href => "/$_->{scr}{id}", image_flagging_display $_->{scr} if auth;
+            span_ image_flagging_display $_->{scr} if !auth;
+            txt_ '] ';
+            # The old NSFW flag has been removed around 2020-07-14, so not relevant for edits made later on.
+            small_ sprintf 'old flag: %s', $_->{nsfw} ? 'NSFW' : 'Safe' if $_[0]{rev_added} < 1594684800;
+        }],
+        [ image       => 'Image',         fmt => sub { image_ $_, thumb => 1 } ],
+        [ img_nsfw    => 'Image NSFW (unused)', fmt => sub { txt_ $_ ? 'Not safe' : 'Safe' } ],
+        $VNDB::ExtLinks::REVISION
+}
+
+
+sub infobox_relations_($v) {
+    return if !$v->{relations}->@*;
+
+    my %rel;
+    push $rel{$_->{relation}}->@*, $_ for $v->{relations}->@*;
+    my $unoffcount = grep !$_->{official}, $v->{relations}->@*;
+
+    tr_ sub {
+        td_ 'Relations';
+        td_ class => 'relations linkradio', sub {
+            if($unoffcount >= 3) {
+                input_ type => 'checkbox', id => 'unoffrelations', class => 'hidden';
+                label_ for => 'unoffrelations', "unofficial ($unoffcount)";
+            }
+            dl_ sub {
+                for(sort keys %rel) {
+                    my @allunoff = (!grep $_->{official}, $rel{$_}->@*) ? (class => 'unofficial') : ();
+                    dt_ @allunoff, $VN_RELATION{$_}{txt};
+                    dd_ @allunoff, sub {
+                        p_ class => $_->{official} ? undef : 'unofficial', sub {
+                            small_ '[unofficial] ' if !$_->{official};
+                            a_ href => "/$_->{vid}", tattr $_;
+                        } for $rel{$_}->@*;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+sub infobox_length_($v) {
+    tr_ sub {
+        td_ 'Play time';
+        td_ sub {
+            if (VNWeb::VN::Length::can_vote()) {
+                my $today = strftime '%Y%m%d', gmtime;
+                my $my = fu->SQL('SELECT sum(length::int), count(*) FROM vn_length_votes WHERE vid =', $v->{id}, 'AND uid =', auth->uid)->flat;
+                a_ class => 'mylengthvote', href => "/$v->{id}/lengthvote", sub {
+                    if ($my->[1]) {
+                        lit_ 'Mine: ';
+                        vnlength_ @$my;
+                    } else {
+                        lit_ 'Vote »';
+                    }
+                } if $my || grep $_->{released} <= $today, $v->{releases}->@*;
+            };
+            # Cached number, which means this VN has counted votes
+            if($v->{c_lengthnum}) {
+                my $m = $v->{c_length};
+                txt_ +(grep $m >= $_->{low} && $m < $_->{high}, values %VN_LENGTH)[0]{txt}.' (';
+                vnlength_ $m;
+                txt_ ' from ';
+                a_ href => "/$v->{id}/lengthvotes", sprintf '%d vote%s', $v->{c_lengthnum}, $v->{c_length}==1?'':'s';
+                txt_ ')';
+            # No cached number so no counted votes; fall back to old 'length' field and display number of uncounted votes
+            } else {
+                my $uncounted = fu->SQL('SELECT count(*) FROM vn_length_votes WHERE vid =', $v->{id}, 'AND NOT private')->val;
+                txt_ $VN_LENGTH{$v->{length}}{txt};
+                if ($v->{length} || $uncounted) {
+                    lit_ ' (';
+                    txt_ $VN_LENGTH{$v->{length}}{time} if $v->{length};
+                    lit_ ', ' if $v->{length} && $uncounted;
+                    a_ href => "/$v->{id}/lengthvotes", sprintf '%d uncounted vote%s', $uncounted, $uncounted == 1 ? '' : 's' if $uncounted;
+                    lit_ ')';
+                }
+            }
+        };
+    };
+}
+
+
+sub infobox_producers_($v) {
+    my $p = fu->SQL('
+        SELECT p.id, p.title, p.sorttitle, rl.lang, bool_or(rp.developer) as developer, bool_or(rp.publisher) as publisher, min(rv.rtype) as rtype, bool_or(r.official) as official
+          FROM releases_vn rv
+          JOIN releases r ON r.id = rv.id
+          JOIN releases_titles rl ON rl.id = rv.id
+          JOIN releases_producers rp ON rp.id = rv.id
+          JOIN', PRODUCERST, 'p ON p.id = rp.pid
+         WHERE NOT r.hidden AND (r.official OR NOT rl.mtl) AND rv.vid =', $v->{id}, '
+         GROUP BY p.id, p.title, p.sorttitle, rl.lang
+         ORDER BY NOT bool_or(r.official), MIN(r.released), p.sorttitle
+    ')->allh;
+    return if !@$p;
+
+    my $hasfull = grep $_->{rtype} eq 'complete', @$p;
+    my %dev;
+    my @dev = grep $_->{developer} && (!$hasfull || $_->{rtype} ne 'trial') && !$dev{$_->{id}}++, @$p;
+
+    tr_ sub {
+        td_ 'Developer';
+        td_ sub {
+            join_ ' & ', sub { a_ href => "/$_->{id}", tattr $_ }, @dev;
+        };
+    } if @dev;
+
+    my(%lang, @lang, $lang);
+    for(grep $_->{publisher} && (!$hasfull || $_->{rtype} ne 'trial'), @$p) {
+        push @lang, $_->{lang} if !$lang{$_->{lang}};
+        push $lang{$_->{lang}}->@*, $_;
+    }
+    return if !keys %lang;
+
+    use sort 'stable';
+    @lang = sort { ($b eq $v->{olang}) cmp ($a eq $v->{olang}) } @lang;
+
+    # Merge multiple languages into one group if the publishers are the same.
+    my @nlang = (shift @lang);
+    my $last = join ';', sort map $_->{id}, $lang{$nlang[0]}->@*;
+    for (@lang) {
+        my $cids = join ';', sort map $_->{id}, $lang{$_}->@*;
+        if($last eq $cids) {
+            $nlang[$#nlang] .= ";$_";
+        } else {
+            push @nlang, $_;
+        }
+        $last = $cids;
+    }
+
+    tr_ sub {
+        td_ 'Publishers';
+        td_ sub {
+            join_ \&br_, sub {
+                my @l = split /;/;
+                abbr_ class => "icon-lang-$_", title => $LANGUAGE{$_}{txt}, '' for @l;
+                join_ ' & ', sub { a_ href => "/$_->{id}", $_->{official} ? () : (class => 'grayedout'), tattr $_ }, $lang{$l[0]}->@*;
+            }, @nlang;
+        }
+    };
+}
+
+
+sub infobox_affiliates_($v) {
+    # If the same shop link has been added to multiple releases, use the 'first' matching type in this list.
+    my @type = ('bundle', '', 'partial', 'trial', 'patch');
+
+    # url => [$title, $url, $price, $type]
+    my %links;
+    for my $rel ($v->{releases}->@*) {
+        my $type =     $rel->{patch} ? 4 :
+            $rel->{rtype} eq 'trial' ? 3 :
+          $rel->{rtype} eq 'partial' ? 2 :
+                    $rel->{c_bundle} ? 0 : 1;
+
+        $links{$_->{url2}} = [ @{$_}{qw/label url2 price/}, min $type, $links{$_->{url2}}[3]||9 ]
+            for grep $_->{price} && $VNDB::ExtLinks::LINKS{$_->{name}}{affil}, $rel->{vislinks}->@*;
+    }
+    return if !keys %links;
+
+    tr_ id => 'buynow', sub {
+        td_ 'Shops';
+        td_ sub {
+            small_ class => 'ad', 'sponsored links';
+            join_ \&br_, sub {
+                b_ '» ';
+                a_ href => $_->[1], sub {
+                    txt_ $_->[2];
+                    small_ ' @ ';
+                    txt_ $_->[0];
+                    small_ " ($type[$_->[3]])" if $_->[3] != 1;
+                };
+            }, sort { $a->[0] cmp $b->[0] || $a->[2] cmp $b->[2] } values %links;
+        }
+    }
+}
+
+
+sub infobox_anime_($v) {
+    return if !$v->{anime}->@*;
+    tr_ sub {
+        td_ 'Related anime';
+        td_ class => 'anime', sub { join_ \&br_, sub {
+            if(!$_->{lastfetch} || !$_->{title_romaji}) {
+                span_ sub {
+                    txt_ '[no information available at this time: ';
+                    a_ href => 'https://anidb.net/anime/'.$_->{aid}, "a$_->{aid}";
+                    txt_ ']';
+                };
+            } else {
+                span_ sub {
+                    txt_ '[';
+                    a_ href => "https://anidb.net/anime/$_->{aid}", title => 'AniDB', 'DB';
+                    for ($_->{ann_id} ? $_->{ann_id}->@* : ()) {
+                        txt_ '-';
+                        a_ href => "https://www.animenewsnetwork.com/encyclopedia/anime.php?id=$_", title => 'Anime News Network', 'ANN';
+                    }
+                    for ($_->{mal_id} ? $_->{mal_id}->@* : ()) {
+                        txt_ '-';
+                        a_ href => "https://myanimelist.net/anime/$_", title => 'MyAnimeList', 'MAL';
+                    }
+                    txt_ '] ';
+                };
+                abbr_ title => $_->{title_kanji}||$_->{title_romaji}, shorten $_->{title_romaji}, 50;
+                my @nfo = (
+                    defined $_->{type} ? $ANIME_TYPE{$_->{type}} : (),
+                    $_->{year} ? $_->{year} : ()
+                );
+                span_ ' ('.join(', ', @nfo).')';
+            }
+        }, $v->{anime}->@* }
+    }
+}
+
+
+sub infobox_tags_($v) {
+    div_ id => 'tagops', sub {
+        debug_ $v->{tags};
+        my @ero = grep($_->{cat} eq 'ero', $v->{tags}->@*) ? ('ero') : ();
+        for ('cont', @ero, 'tech') {
+            input_ id => "cat_$_", type => 'checkbox', class => 'hidden',
+                (auth ? auth->pref("tags_$_") : $_ ne 'ero') ? (checked => 'checked') : ();
+            label_ for => "cat_$_", lc $TAG_CATEGORY{$_};
+        }
+        my $spoiler = auth->pref('spoilers') || 0;
+        input_ id => 'tag_spoil_none', type => 'radio', class => 'hidden', name => 'tag_spoiler', $spoiler == 0 ? (checked => 'checked') : ();
+        label_ for => 'tag_spoil_none', class => 'sec', 'hide spoilers';
+        input_ id => 'tag_spoil_some', type => 'radio', class => 'hidden', name => 'tag_spoiler', $spoiler == 1 ? (checked => 'checked') : ();
+        label_ for => 'tag_spoil_some', 'show minor spoilers';
+        input_ id => 'tag_spoil_all', type => 'radio', class => 'hidden', name => 'tag_spoiler', $spoiler == 2 ? (checked => 'checked') : ();
+        label_ for => 'tag_spoil_all', 'spoil me!';
+
+        input_ id => 'tag_toggle_summary', type => 'radio', class => 'hidden', name => 'tag_all', auth->pref('tags_all') ? () : (checked => 'checked');
+        label_ for => 'tag_toggle_summary', class => 'sec', 'summary';
+        input_ id => 'tag_toggle_all', type => 'radio', class => 'hidden', name => 'tag_all', auth->pref('tags_all') ? (checked => 'checked') : ();
+        label_ for => 'tag_toggle_all', class => 'lst', 'all';
+        div_ id => 'vntags', sub {
+            my %counts = map +($_,[0,0,0]), keys %TAG_CATEGORY;
+            join_ ' ', sub {
+                my $spoil = $_->{override}//$_->{spoiler};
+                my $cnt = $counts{$_->{cat}};
+                $cnt->[2]++;
+                $cnt->[1]++ if $spoil < 2;
+                $cnt->[0]++ if $spoil < 1;
+                my $cut = defined $_->{override} ? '' : $cnt->[0] > 15 ? ' cut cut2 cut1 cut0' : $cnt->[1] > 15 ? ' cut cut2 cut1' : $cnt->[2] > 15 ? ' cut cut2' : '';
+                span_ class => "tagspl$spoil cat_$_->{cat} $cut", sub {
+                    a_ href => "/$_->{id}",
+                        class => !$_->{lie} ? undef : defined $_->{override} ? 'lieo' : 'lie',
+                        '+'   => $_->{color} && $_->{color} =~ /standout|grayedout/ ? $_->{color} : undef,
+                        style => sprintf('font-size: %dpx', $_->{rating}*3.5+6)
+                                 .(($_->{color}//'') =~ /^#/ ? "; color: $_->{color}" : ''),
+                        $_->{name};
+                    spoil_ $_->{spoiler};
+                    small_ sprintf ' %.1f', $_->{rating};
+                }
+            }, $v->{tags}->@*;
+        }
+    }
+}
+
+
+# Also used by Chars::VNTab, Reviews::VNTab & VN::Quotes
+sub infobox_($v, $notags=0) {
+    sub tlang_($t) {
+        tr_ class => 'title', '+' => $t->{official} ? undef : 'grayedout', sub {
+            td_ sub {
+                abbr_ class => "icon-lang-$t->{lang}", title => $LANGUAGE{$t->{lang}}{txt}, '';
+            };
+            td_ sub {
+                span_ tlang($t->{lang}, $t->{title}), $t->{title};
+                if($t->{latin}) {
+                    br_;
+                    txt_ $t->{latin};
+                }
+            }
+        }
+    }
+
+    article_ sub {
+        itemmsg_ $v;
+        h1_ tlang($v->{title}[0], $v->{title}[1]), $v->{title}[1];
+        h2_ class => 'alttitle', tlang(@{$v->{title}}[2,3]), $v->{title}[3] if $v->{title}[3] && $v->{title}[3] ne $v->{title}[1];
+
+        div_ class => 'warning', sub {
+            h2_ 'No releases';
+            p_ sub {
+                txt_ 'This entry does not have any releases associated with it yet. Please ';
+                a_ href => "/$v->{id}/add", 'add a release entry';
+                txt_ ' if you have information about this visual novel.';
+                br_;
+                txt_ '(A release entry should be present even if nothing has been
+                    released yet, in that case it can just be a placeholder for a
+                    future release)';
+            };
+        } if !$v->{hidden} && auth->permEdit && !$v->{releases}->@*;
+
+        p_ class => 'center standout', sub { lit_ config->{special_games}{$v->{id}}; br_; br_ } if config->{special_games}{$v->{id}};
+
+        div_ class => 'vndetails', sub {
+            div_ class => 'vnimg', sub {
+                image_ $v->{vnimage}, thumb => 1, alt => $v->{title}[1];
+                a_ href => "/$v->{id}/cv#cv", sprintf '%d cover%s', $v->{relimgs}{covers}, $v->{relimgs}{covers} == 1 ? '' : 's' if $v->{relimgs}{covers};
+                my $other = $v->{relimgs}{total} - $v->{relimgs}{covers};
+                if ($other > 0) {
+                    lit_ ' + ';
+                    a_ href => "/$v->{id}/cv?a=1#cv", sprintf '%d package artwork', $other;
+                }
+            };
+
+            table_ class => 'stripe', sub {
+                tr_ sub {
+                    td_ 'Title';
+                    td_ sub {
+                        table_ sub { tlang_ $v->{titles}[0] };
+                    };
+                } if $v->{titles}->@* == 1;
+                tr_ sub {
+                    td_ class => 'titles', colspan => 2, sub {
+                        details_ sub {
+                            summary_ sub {
+                                div_ 'Titles';
+                                table_ sub { tlang_ grep $_->{lang} eq $v->{olang}, $v->{titles}->@* };
+                            };
+                            table_ sub {
+                                tlang_ $_ for grep $_->{lang} ne $v->{olang}, $v->{titles}->@*;
+                            };
+                        };
+                    };
+                } if $v->{titles}->@* > 1;
+
+                tr_ sub {
+                    td_ 'Aliases';
+                    td_ $v->{alias} =~ s/\n/, /gr;
+                } if $v->{alias};
+
+                tr_ sub {
+                    td_ 'Status';
+                    td_ sub {
+                        txt_ 'In development' if $v->{devstatus} == 1;
+                        txt_ 'Unfinished, no ongoing development' if $v->{devstatus} == 2;
+                    };
+                } if $v->{devstatus};
+
+                infobox_length_ $v;
+                infobox_producers_ $v;
+                infobox_relations_ $v;
+
+                tr_ sub {
+                    td_ 'Links';
+                    td_ sub { join_ ', ', sub { a_ href => $_->{url2}, $_->{label} }, $v->{vislinks}->@* };
+                } if $v->{vislinks}->@*;
+
+                infobox_affiliates_ $v;
+                infobox_anime_ $v;
+
+                tr_ class => 'nostripe', sub {
+                    td_ colspan => 2, widget(
+                        UListVNPage => ulists_widget_full_data $v, 1, canvote $v
+                    ), '';
+                } if auth;
+
+                tr_ class => 'nostripe', sub {
+                    td_ class => 'vndesc', colspan => 2, sub {
+                        h2_ 'Description';
+                        p_ sub { lit_ $v->{description} ? bb_format $v->{description} : '-' };
+                        debug_ $v;
+                    }
+                }
+            }
+        };
+        div_ class => 'clearfloat', style => 'height: 5px', ''; # otherwise the tabs below aren't positioned correctly
+        infobox_tags_ $v if $v->{tags}->@* && !$notags;
+    }
+}
+
+
+# Also used by Chars::VNTab, Reviews::VNTab and VN::Quotes
+sub tabs_($v, $tab='') {
+    my $chars = fu->SQL('SELECT COUNT(DISTINCT c.id) FROM chars c JOIN chars_vns cv ON cv.id = c.id WHERE NOT c.hidden AND cv.vid =', $v->{id})->val;
+    my $quotes = fu->SQL('SELECT COUNT(*) FROM quotes WHERE NOT hidden AND vid =', $v->{id})->val;
+
+    nav_ sub {
+        menu_ sub {
+            li_ class => ($tab eq ''        ? ' tabselected' : ''), sub { a_ href => "/$v->{id}#main", name => 'main', 'main' };
+            li_ class => ($tab eq 'cv'      ? ' tabselected' : ''), sub { a_ href => "/$v->{id}/cv#cv", name => 'cv', "covers ($v->{relimgs}{total})" } if $v->{relimgs}{total};
+            li_ class => ($tab eq 'tags'    ? ' tabselected' : ''), sub { a_ href => "/$v->{id}/tags#tags", name => 'tags', 'tags' };
+            li_ class => ($tab eq 'chars'   ? ' tabselected' : ''), sub { a_ href => "/$v->{id}/chars#chars", name => 'chars', "characters ($chars)" } if $chars;
+            li_ class => ($tab eq 'reviews' ? ' tabselected' : ''), sub { a_ href => "/$v->{id}/reviews#review", name => 'review', "reviews ($v->{reviews}{total})" } if $v->{reviews}{total};
+            li_ class => ($tab eq 'quotes'  ? ' tabselected' : ''), sub { a_ href => "/$v->{id}/quotes#quotes", name => 'quotes', "quotes ($quotes)" } if !config->{moe};
+        };
+        menu_ sub {
+            if(auth && canvote $v) {
+                li_ sub { a_ href => "/$v->{id}/addreview", 'add review' } if !$v->{myreview} && can_edit w => {};
+                li_ sub { a_ href => "/$v->{myreview}/edit", 'edit review' } if $v->{myreview};
+            }
+            if(auth->permEdit) {
+                li_ sub { a_ href => "/$v->{id}/add", 'add release' };
+                li_ sub { a_ href => "/$v->{id}/addchar", 'add character' };
+            }
+        };
+    }
+}
+
+
+sub releases_($v) {
+    enrich_release $v->{releases};
+    $v->{releases} = sort_releases $v->{releases};
+
+    my(%lang, %langrel, %langmtl);
+    for my $r ($v->{releases}->@*) {
+        for ($r->{titles}->@*) {
+            push $lang{$_->{lang}}->@*, $r;
+            $langmtl{$_->{lang}} = ($langmtl{$_->{lang}}//1) && $_->{mtl};
+        }
+    }
+    $langrel{$_} = min map $_->{released}, $lang{$_}->@* for keys %lang;
+    my @lang = sort { $langrel{$a} <=> $langrel{$b} || ($b eq $v->{olang}) cmp ($a eq $v->{olang}) || $a cmp $b } keys %lang;
+    my $pref = prefs;
+
+    my sub lang_ {
+        my($lang) = @_;
+        my $ropt = { id => $lang, lang => $lang };
+        my $mtl = $langmtl{$lang};
+        my $open = ($pref->{vnrel_olang} && $lang eq $v->{olang} && !$mtl) || ($pref->{vnrel_langs}{$lang} && (!$mtl || $pref->{vnrel_mtl}));
+        details_ open => $open?'open':undef, sub {
+            summary_ $mtl ? (class => 'mtl') : (), sub {
+                abbr_ class => "icon-lang-$lang".($mtl?' mtl':''), title => $LANGUAGE{$lang}{txt}, '';
+                txt_ $LANGUAGE{$lang}{txt};
+                small_ sprintf ' (%d)', scalar $lang{$lang}->@*;
+            };
+            table_ class => 'releases', sub {
+                release_row_ $_, $ropt for $lang{$lang}->@*;
+            };
+        };
+    }
+
+    article_ class => 'vnreleases', sub {
+        h1_ 'Releases';
+        if(!$v->{releases}->@*) {
+            p_ 'We don\'t have any information about releases of this visual novel yet...';
+        } else {
+            lang_ $_ for @lang;
+        }
+    }
+}
+
+
+sub staff_cols_($lst) {
+    # XXX: The staff listing is included in the page 3 times, for 3 different
+    # layouts. A better approach to get the same layout is to add the boxes to
+    # the HTML once with classes indicating the box position (e.g.
+    # "4col-col1-row1 3col-col2-row1" etc) and then using CSS to position the
+    # box appropriately. My attempts to do this have failed, however. The
+    # layouting can also be done in JS, but that's not my preferred option.
+
+    # Step 1: Get a list of 'boxes'; Each 'box' represents a role with a list of staff entries.
+    # @boxes = [ $height, $roleimp, $html ]
+    my %roles;
+    push $roles{$_->{role}}->@*, $_ for grep $_->{sid}, @$lst;
+    my $i=0;
+    my @boxes =
+        sort { $b->[0] <=> $a->[0] || $a->[1] <=> $b->[1] }
+        map [ 2+$roles{$_}->@*, $i++,
+            fragment sub {
+                li_ class => 'vnstaff_head', $CREDIT_TYPE{$_};
+                li_ sub {
+                    a_ href => "/$_->{sid}", tattr $_;
+                    small_ $_->{note} if $_->{note};
+                } for sort { $a->{title}[1] cmp $b->{title}[1] } $roles{$_}->@*;
+            }
+        ], grep $roles{$_}, keys %CREDIT_TYPE;
+    utf8::decode($_->[2]) for @boxes;
+
+    # Step 2. Assign boxes to columns for 2 to 4 column layouts,
+    # efficiently packing the boxes to use the least vertical space,
+    # sorting the columns and boxes within columns by role importance.
+    # (There is no 1-column layout, that's just the 2-column layout stacked with css)
+    my @cols = map [map [0,99,[]], 1..$_], 2..4; # [ $height, $min_roleimp, $boxes ] for each column in each layout
+    for my $c (@cols) {
+        for (@boxes) {
+            my $smallest = $c->[0];
+            $c->[$_][0] < $smallest->[0] && ($smallest = $c->[$_]) for 1..$#$c;
+            $smallest->[0] += $_->[0];
+            $smallest->[1] = $_->[1] if $_->[1] < $smallest->[1];
+            push $smallest->[2]->@*, $_;
+        }
+        $_->[2] = [ sort { $a->[1] <=> $b->[1] } $_->[2]->@* ] for @$c;
+        @$c = sort { $a->[1] <=> $b->[1] } @$c;
+    }
+
+    div_ class => sprintf('vnstaff-%d', scalar @$_), sub {
+        ul_ sub {
+            lit_ $_->[2] for $_->[2]->@*;
+        } for @$_
+    } for @cols;
+}
+
+
+sub staff_ {
+    my($v) = @_;
+    return if !$v->{staff}->@*;
+
+    my %staff;
+    push $staff{ $_->{eid} // '' }->@*, $_ for $v->{staff}->@*;
+    my $pref = prefs;
+
+    article_ class => 'vnstaff', id => 'staff', sub {
+        h1_ 'Staff';
+        if (!$v->{editions}->@*) {
+            staff_cols_ $v->{staff};
+            return;
+        }
+        for my $e (undef, $v->{editions}->@*) {
+            my $lst = $staff{ $e ? $e->{eid} : '' };
+            next if !$lst;
+            my $lang = ($e && $e->{lang}) || $v->{olang};
+            my $unoff = $e && !$e->{official};
+            my $open = ($pref->{staffed_olang} && !$e) || ($pref->{staffed_langs}{$lang} && (!$unoff || $pref->{staffed_unoff}));
+            details_ open => $open?'open':undef, sub {
+                summary_ sub {
+                    abbr_ class => "icon-lang-$e->{lang}", title => $LANGUAGE{$e->{lang}}{txt}, '' if $e && $e->{lang};
+                    txt_ 'Original edition' if !$e;
+                    txt_ $e->{name} if $e;
+                    small_ ' (unofficial)' if $unoff;
+                };
+                staff_cols_ $lst;
+            };
+        }
+    };
+}
+
+
+sub charsum_($v) {
+    my $spoil = viewget->{spoilers};
+    my $c = fu->SQL('
+        SELECT c.id, c.title, c.sex, c.gender, v.role
+          FROM', CHARST, 'c
+          JOIN (SELECT id, MIN(role) FROM chars_vns WHERE role <> \'appears\' AND spoil <=', $spoil, 'AND vid =', $v->{id}, 'GROUP BY id) v(id,role) ON c.id = v.id
+         WHERE NOT c.hidden
+         ORDER BY v.role, c.sorttitle, c.id'
+    )->allh;
+    return if !@$c;
+    fu->enrich(aoh => 'seiyuu', sub { SQL('
+        SELECT vs.cid, sa.id, sa.title, vs.note
+          FROM vn_seiyuu vs
+          JOIN', STAFF_ALIAST, 'sa ON sa.aid = vs.aid
+         WHERE vs.id =', $v->{id}, 'AND vs.cid', IN $_, '
+         ORDER BY sa.sorttitle'
+    ) }, $c);
+
+    article_ 'data-mainbox-summarize' => 210, sub {
+        p_ class => 'mainopts', sub {
+            a_ href => "/$v->{id}/chars#chars", 'Full character list';
+        };
+        h1_ 'Character summary';
+        div_ class => 'charsum_list', sub {
+            div_ class => 'charsum_bubble', sub {
+                div_ class => 'name', sub {
+                    span_ sub {
+                        charsex_ $_->{sex}, $_->{gender} if $_->{sex} || defined $_->{gender};
+                        a_ href => "/$_->{id}", tattr $_;
+                    };
+                    em_ $CHAR_ROLE{$_->{role}}{txt};
+                };
+                div_ class => 'actor', sub {
+                    txt_ 'Voiced by';
+                    $_->{seiyuu}->@* > 1 ? br_ : txt_ ' ';
+                    join_ \&br_, sub {
+                        a_ href => "/$_->{id}", tattr $_;
+                        small_ $_->{note} if $_->{note};
+                    }, $_->{seiyuu}->@*;
+                } if $_->{seiyuu}->@*;
+            } for @$c;
+        };
+    };
+}
+
+
+sub stats_($v) {
+    my $stats = fu->SQL('
+        SELECT (uv.vote::numeric/10)::int AS idx, COUNT(uv.vote) as votes, SUM(uv.vote) AS total
+          FROM ulist_vns uv
+         WHERE uv.vote IS NOT NULL
+           AND NOT EXISTS(SELECT 1 FROM users u WHERE u.id = uv.uid AND u.ign_votes)
+           AND uv.vid =', $v->{id}, '
+         GROUP BY (uv.vote::numeric/10)::int'
+    )->allh;
+    my $sum = sum map $_->{total}, @$stats;
+    my $max = max map $_->{votes}, @$stats;
+    my $num = sum map $_->{votes}, @$stats;
+
+    my $recent = @$stats && fu->SQL('
+         SELECT uv.vote, uv.c_private, uv.vote_date as date, ', USER, '
+           FROM ulist_vns uv
+           JOIN users u ON u.id = uv.uid
+          WHERE uv.vid =', $v->{id}, 'AND uv.vote IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM users u WHERE u.id = uv.uid AND u.ign_votes)
+          ORDER BY uv.vote_date DESC
+          LIMIT', $v->{reviews}{total} ? 7 : 8
+    )->allh;
+
+    my $rank = $v->{c_votecount} && fu->SQL('SELECT c_average, c_rating, c_pop_rank, c_rat_rank FROM vn v WHERE id =', $v->{id})->rowh;
+
+    my sub votestats_ {
+        table_ class => 'votegraph', sub {
+            thead_ sub { tr_ sub { td_ colspan => 2, 'Vote stats' } };
+            tfoot_ sub { tr_ sub { td_ colspan => 2, sub {
+                txt_ sprintf '%d vote%s%s', $num, $num == 1 ? '' : 's', $rank && $rank->{c_pop_rank} ? sprintf ' (rank %d)', $rank->{c_pop_rank} : '';
+                br_;
+                txt_ sprintf '%.2f average (%s%s)', int($sum/$num*10 + 0.5) / 100,
+                    $rank && $rank->{c_rating} && $rank->{c_rating} != $rank->{c_average} ? sprintf '%.02f weighted, ', $rank->{c_rating}/100 : '',
+                    $rank && $rank->{c_rat_rank} ? sprintf('rank %d', $rank->{c_rat_rank}) : 'unranked';
+            } } };
+            tr_ sub {
+                my $num = $_;
+                my $votes = [grep $num == $_->{idx}, @$stats]->[0]{votes} || 0;
+                td_ class => 'number', $num;
+                td_ class => 'graph', sub {
+                    div_ style => sprintf('width: %dpx', ($votes||0)/$max*250), ' ';
+                    txt_ $votes||0;
+                };
+            } for (reverse 1..10);
+        };
+
+        table_ class => 'recentvotes stripe', sub {
+            thead_ sub { tr_ sub { td_ colspan => 3, sub {
+                txt_ 'Recent votes';
+                span_ sub {
+                    txt_ '(';
+                    a_ href => "/$v->{id}/votes", 'show all';
+                    txt_ ')';
+                }
+            } } };
+            tfoot_ sub { tr_ sub { td_ colspan => 3, sub {
+                a_ href => "/$v->{id}/reviews#review", sprintf'%d review%s »', $v->{reviews}{total}, $v->{reviews}{total}==1?'':'s';
+            } } } if $v->{reviews}{total};
+            tr_ sub {
+                td_ sub {
+                    small_ 'hidden' if $_->{c_private};
+                    user_ $_ if !$_->{c_private};
+                };
+                td_ fmtvote $_->{vote};
+                td_ fmtdate $_->{date};
+            } for @$recent;
+        } if $recent && @$recent;
+        clearfloat_;
+    }
+
+    article_ id => 'stats', sub {
+        h1_ 'User stats';
+        if(!@$stats) {
+            p_ 'Nobody has voted on this visual novel yet...';
+        } else {
+            div_ class => 'votestats', \&votestats_;
+        }
+    }
+}
+
+
+sub screenshots_($v) {
+    my $s = $v->{screenshots};
+    $s = [ grep !$_->{scr}{sexual} && !$_->{scr}{violence}, @$s ] if config->{moe};
+    return if !@$s;
+
+    my $sexp = auth->pref('max_sexual')||0;
+    my $viop = auth->pref('max_violence')||0;
+    $viop = 0 if $sexp < 0;
+    my $sexs = min($sexp, max map $_->{scr}{sexual}, @$s);
+    my $vios = min($viop, max map $_->{scr}{violence}, @$s);
+
+    my @sex = (0,0,0);
+    my @vio = (0,0,0);
+    for (@$s) { $sex[$_->{scr}{sexual}]++; $vio[$_->{scr}{violence}]++ }
+
+    my %allrel = map +($_->{id}, 1), $v->{releases}->@*;
+    my %rel;
+    push $rel{ $_->{rid} && $allrel{$_->{rid}} ? $_->{rid} : ''}->@*, $_ for @$s;
+
+    input_ name => 'scrhide_s', id => "scrhide_s$_", type => 'radio', class => 'hidden', $sexs == $_ ? (checked => 'checked') : () for 0..2;
+    input_ name => 'scrhide_v', id => "scrhide_v$_", type => 'radio', class => 'hidden', $vios == $_ ? (checked => 'checked') : () for 0..2;
+    article_ id => 'screenshots', sub {
+
+        p_ class => 'mainopts', sub {
+            if($sexp < 0 || $sex[1] || $sex[2]) {
+                label_ for => 'scrhide_s0', class => 'fake_link', "Safe ($sex[0])";
+                label_ for => 'scrhide_s1', class => 'fake_link', "Suggestive ($sex[1])" if $sex[1];
+                label_ for => 'scrhide_s2', class => 'fake_link', "Explicit ($sex[2])" if $sex[2];
+            }
+            small_ ' | ' if ($sexp < 0 || $sex[1] || $sex[2]) && ($vio[1] || $vio[2]);
+            if($vio[1] || $vio[2]) {
+                label_ for => 'scrhide_v0', class => 'fake_link', "Tame ($vio[0])";
+                label_ for => 'scrhide_v1', class => 'fake_link', "Violent ($vio[1])" if $vio[1];
+                label_ for => 'scrhide_v2', class => 'fake_link', "Brutal ($vio[2])" if $vio[2];
+            }
+        } if $sexp < 0 || $sex[1] || $sex[2] || $vio[1] || $vio[2];
+
+        h1_ 'Screenshots';
+
+        for my $r ('', grep $rel{$_->{id}}, $v->{releases}->@*) {
+            p_ class => 'rel', sub {
+                abbr_ class => "icon-lang-$_->{lang}", title => $LANGUAGE{$_->{lang}}{txt}, '' for $r->{titles}->@*;
+                platform_ $_ for $r->{platforms}->@*;
+                a_ href => "/$r->{id}", tattr $r;
+            } if $r;
+            div_ class => 'scr', sub {
+                a_ href => imgurl($_->{scr}{id}),
+                    'data-iv' => "$_->{scr}{width}x$_->{scr}{height}:scr:$_->{scr}{sexual}$_->{scr}{violence}$_->{scr}{votecount}",
+                    class => 'scrlnk',
+                    '+'   => $_->{scr}{sexual} <= 0   ? 'scrlnk_s0' : undef,
+                    '+'   => $_->{scr}{sexual} <= 1   ? 'scrlnk_s1' : undef,
+                    '+'   => $_->{scr}{violence} >= 1 ? 'scrlnk_v0' : undef,
+                    '+'   => $_->{scr}{violence} >= 2 ? 'scrlnk_v1' : undef,
+                    '+'   => $_->{scr}{sexual} || $_->{scr}{violence} ? 'nsfw' : undef,
+                sub {
+                    my($w, $h) = imgsize $_->{scr}{width}, $_->{scr}{height}, config->{scr_size}->@*;
+                    img_ src => imgurl($_->{scr}{id}, 't'), width => $w, height => $h, alt => "Screenshot $_->{scr}{id}";
+                } for $rel{$r && $r->{id}}->@*;
+            }
+        }
+    }
+}
+
+
+sub tags_($v) {
+    if(!$v->{tags}->@*) {
+        article_ sub {
+            h1_ 'Tags';
+            p_ 'This VN has no tags assigned to it (yet).';
+        };
+        return;
+    }
+
+    my %tags = map +($_->{id},$_), $v->{tags}->@*;
+    my $parents = fu->SQL('
+        WITH RECURSIVE parents (tag, child) AS (
+          SELECT tag::vndbid, NULL::vndbid FROM unnest(', [ keys %tags ], '::vndbid[]) x(tag)
+          UNION
+          SELECT tp.parent, tp.id FROM tags_parents tp, parents a WHERE a.tag = tp.id AND tp.main
+        ) SELECT * FROM parents WHERE child IS NOT NULL'
+    )->allh;
+
+    for(@$parents) {
+        $tags{$_->{tag}} ||= { id => $_->{tag} };
+        push $tags{$_->{tag}}{childs}->@*, $_->{child};
+        $tags{$_->{child}}{notroot} = 1;
+    }
+    fu->enrich(merge => 1, 'SELECT id, name, cat FROM tags WHERE id', [ grep !$_->{name}, values %tags ]);
+    my @roots = sort { $a->{name} cmp $b->{name} } grep !$_->{notroot}, values %tags;
+
+    # Calculate rating and spoiler for parent tags.
+    my sub scores {
+        my($t) = @_;
+        return if !$t->{childs};
+        __SUB__->($tags{$_}) for $t->{childs}->@*;
+        $t->{inherited} = 1 if !defined $t->{rating};
+        $t->{spoiler} //= min map $tags{$_}{spoiler}, $t->{childs}->@*;
+        $t->{override} //= min map $tags{$_}{override}//$tags{$_}{spoiler}, $t->{childs}->@* if grep defined($tags{$_}{override}), $t->{childs}->@*;
+        $t->{rating} //= sum(map $tags{$_}{rating}, $t->{childs}->@*) / $t->{childs}->@*;
+    }
+    scores $_ for @roots;
+
+    my $view = viewget;
+    my sub rec {
+        my($lvl, $t) = @_;
+        return if ($t->{override}//$t->{spoiler}) > $view->{spoilers};
+        li_ class => "tagvnlist-top", sub {
+            h3_ sub { a_ href => "/$t->{id}", $t->{name} }
+        } if !$lvl;
+
+        li_ class => $lvl == 1 ? 'tagvnlist-parent' : $t->{inherited} ? 'tagvnlist-inherited' : undef, sub {
+            VNWeb::TT::Lib::tagscore_($t->{rating}, $t->{inherited});
+            small_ '━━'x($lvl-1).' ' if $lvl > 1;
+            a_ href => "/$t->{id}",
+                class => $t->{color} && $t->{color} =~ /standout|grayedout/ ? $t->{color} : undef,
+                '+'   => $t->{lie} && ($view->{spoilers} > 1 || defined $t->{override}) ? 'lie' : undef,
+                '+'   => !$t->{rating} ? 'parent' : undef,
+                style => ($t->{color}//'') =~ /^#/ ? "color: $t->{color}" : undef,
+                $t->{name};
+            spoil_ $t->{spoiler};
+            a_ href => "/g/links?v=$v->{id}&t=$t->{id}", class => 'grayedout', " ($t->{count})" if $t->{count};
+        } if $lvl;
+
+        if($t->{childs}) {
+            __SUB__->($lvl+1, $_) for sort { $a->{name} cmp $b->{name} } map $tags{$_}, $t->{childs}->@*;
+        }
+    }
+
+    article_ sub {
+        my $max_spoil = max map $_->{lie}?2:$_->{spoiler}, values %tags;
+        p_ class => 'mainopts', sub {
+            if($max_spoil) {
+                a_ class => $view->{spoilers} == 0 ? 'checked' : undef, viewset(fu->path.'#tags', spoilers=>0), 'Hide spoilers';
+                a_ class => $view->{spoilers} == 1 ? 'checked' : undef, viewset(fu->path.'#tags', spoilers=>1), 'Show minor spoilers';
+                a_ class => $view->{spoilers} == 2 ? 'standout': undef, viewset(fu->path.'#tags', spoilers=>2), 'Spoil me!' if $max_spoil == 2;
+            }
+        } if $max_spoil;
+
+        h1_ 'Tags';
+        ul_ class => 'vntaglist', sub {
+            rec 0, $_ for @roots;
+        };
+        debug_ \%tags;
+    };
+}
+
+
+sub covers_($v) {
+    my $all = !!fu->query('a');
+
+    my $lst = fu->SQL('
+        SELECT ri.img, ri.itype, ri.lang::text[], ri.photo, r.id, r.released, r.title, r.patch
+             , r.c_bundle AND ri.vid IS NULL AS bundle, rv.rtype, viv.img IS NOT NULL AS voted
+          FROM releases_images ri
+          JOIN', RELEASEST, 'r ON r.id = ri.id
+          JOIN releases_vn rv ON rv.id = ri.id
+          LEFT JOIN vn_image_votes viv ON viv.vid =', $v->{id}, 'AND viv.uid =', auth->uid, 'AND viv.img = ri.img
+         WHERE NOT r.hidden AND rv.vid =', $v->{id}, '
+           AND (ri.vid IS NULL OR ri.vid =', $v->{id}, ')',
+               $all ? () : "AND ri.itype IN('dig', 'pkgfront')", '
+         ORDER BY r.released
+    ')->allh;
+    enrich_image_obj img => $lst;
+    fu->enrich(aoh => 'rlang', sub { SQL 'SELECT id, lang, mtl FROM releases_titles WHERE id', IN $_, 'ORDER BY lang' }, $lst);
+    fu->enrich(aov => 'platforms', sub { SQL 'SELECT id, platform FROM releases_platforms WHERE id', IN $_, 'ORDER BY platform' }, $lst);
+
+    my %cv;
+    push $cv{$_->{img}{id}}->@*, $_ for @$lst;
+
+    fu->enrich(aoh => 'votes', sub { SQL '
+        SELECT viv.img,', USER, '
+          FROM vn_image_votes viv
+          JOIN users u ON u.id = viv.uid
+         WHERE viv.vid =', $v->{id}, 'AND viv.img', IN $_, '
+         ORDER BY viv.date DESC'
+    }, [ map $_->[0]{img}, values %cv ]);
+
+    my sub cover_ {
+        my($l) = @_;
+        my($w) = imgsize @{$l->[0]{img}}{'width','height'}, config->{cv_size}->@*;
+        $w = 150 if $w < 150;
+        div_ style => "width: ${w}px", sub {
+            my $img = $l->[0]{img};
+            my $canvote = auth && grep $_->{itype} eq 'dig' || $_->{itype} eq 'pkgfront', @$l;
+            image_ $img, cat => 'cover', thumb => 1, extra => !$canvote ? undef : sub {
+                div_ class => 'vnimagevote', 'data-voting' => join(',', $v->{id}, $img->{id}, $l->[0]{voted}?1:0), '';
+            };
+            my %t;
+            my $photo = !grep !$_->{photo}, @$l;
+            my $ismain     = $v->{c_image}    && $img->{id} eq $v->{c_image};
+            my $isearliest = $v->{c_imgfirst} && $img->{id} eq $v->{c_imgfirst};
+            my $islatest   = $v->{c_imglast}  && $img->{id} eq $v->{c_imglast};
+            details_ class => 'votes', sub {
+                summary_ class => $photo ? 'grayedout' : undef, sub {
+                    lit_ scalar $img->{votes}->@* if $img->{votes}->@*;
+                    lit_ '♥' if $ismain;
+                    lit_ '↶' if !$ismain && $isearliest;
+                    lit_ '↷' if !$ismain && $islatest;
+                };
+                join_ ', ', sub { user_ $_ }, $img->{votes}->@*;
+                if ($photo) {
+                    div_ class => 'grayedout', 'Flagged as a photo';
+                } elsif (!grep +(grep $_ eq $v->{olang}, $_->{lang} ? $_->{lang}->@* : map $_->{lang}, $_->{rlang}->@*), @$l) {
+                    div_ class => 'grayedout', '-3 not original language';
+                } elsif (!grep !$_->{patch}, @$l) {
+                    div_ class => 'grayedout', '-3 patch release';
+                } elsif (!grep !$_->{bundle}, @$l) {
+                    div_ class => 'grayedout', '-3 bundle release';
+                }
+                my @sel = (
+                    $ismain     ? '♥ default image' : (),
+                    $isearliest ? '↶ earliest release' : (),
+                    $islatest   ? '↷ latest release' : (),
+                );
+                div_ sub { join_ ' ', sub { span_ class => 'nowrap', $_ }, @sel } if @sel;
+            } if $img->{votes}->@* || $ismain || $isearliest || $islatest;
+            h3_ join ', ', grep !$t{$_}++, map $RELEASE_IMAGE_TYPE{$_->{itype}}{txt}, @$l;
+            p_ sub {
+                rdate_ $_->{released};
+                txt_ ' ';
+                platform_ $_ for $_->{platforms}->@*;
+                if ($_->{lang}) {
+                    abbr_ class => "icon-lang-$_", title => $LANGUAGE{$_}{txt}, '' for $_->{lang}->@*;
+                } else {
+                    abbr_ class => "icon-lang-$_->{lang}".($_->{mtl}?' mtl':''), title => $LANGUAGE{$_->{lang}}{txt}, '' for $_->{rlang}->@*;
+                }
+                abbr_ class => "icon-rt$_->{rtype}", title => $_->{rtype}, '';
+                br_;
+                a_ href => "/$_->{id}", tattr $_;
+            } for @$l;
+        };
+    };
+
+    article_ sub {
+        p_ class => 'mainopts', sub {
+            a_ class => !$all ? 'checked' : undef, href => '?a=0#cv', "Only covers ($v->{relimgs}{covers})";
+            a_ class =>  $all ? 'checked' : undef, href => '?a=1#cv', "All package artwork ($v->{relimgs}{total})";
+        } if $v->{relimgs}{total} > $v->{relimgs}{covers};
+        h1_ 'Release Covers';
+        p_ sub {
+            small_ 'Click the star icon to select the cover you would like to see as main visual novel image. ';
+            small_ 'When you star multiple covers, the most recently starred cover is used. ' if keys %cv > 1;
+            small_ 'Votes are public and used to select the default image for this visual novel.';
+        } if auth;
+        div_ class => 'vncovers', sub {
+            div_ sub { cover_ $_ } for grep $_, map delete($cv{$_->{img}{id}}), @$lst;
+        };
+    };
+}
+
+
+FU::get qr{/$RE{vrev}}, sub($id, $rev=0) {
+    my $v = db_entry $id, $rev or fu->notfound;
+    enrich_item $v, 1, $rev;
+
+    framework_ title => $v->{title}[1], index => !$rev, dbobj => $v, hiddenmsg => 1, js => 1, og => og($v),
+    sub {
+        rev_ $v if $rev;
+        infobox_ $v;
+        tabs_ $v;
+        releases_ $v;
+        staff_ $v;
+        charsum_ $v;
+        stats_ $v;
+        screenshots_ $v;
+    };
+};
+
+
+FU::get qr{/$RE{vid}/tags}, sub($id) {
+    my $v = db_entry $id or fu->notfound;
+    enrich_vn $v;
+
+    framework_ title => $v->{title}[1], index => 1, dbobj => $v, hiddenmsg => 1,
+    sub {
+        infobox_ $v, 1;
+        tabs_ $v, 'tags';
+        tags_ $v;
+    };
+};
+
+
+FU::get qr{/$RE{vid}/cv}, sub($id) {
+    my $v = db_entry $id or fu->notfound;
+    enrich_vn $v;
+
+    framework_ title => $v->{title}[1], index => 1, dbobj => $v, hiddenmsg => 1,
+    sub {
+        infobox_ $v, 1;
+        tabs_ $v, 'cv';
+        covers_ $v;
+    };
+};
+
+1;

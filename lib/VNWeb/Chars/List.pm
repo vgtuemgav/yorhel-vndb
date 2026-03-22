@@ -1,0 +1,143 @@
+package VNWeb::Chars::List;
+
+use VNWeb::Prelude;
+use VNWeb::AdvSearch;
+use VNWeb::Filters;
+use VNWeb::Images::Lib;
+
+our $TABLEOPTS = tableopts
+    _pref => 'tableopts_c',
+    _views => [qw|rows cards grid|];
+
+
+# Also used by VNWeb::TT::TraitPage
+sub listing_($opt, $list, $count) {
+    my sub url { '?'.query_encode({%$opt, @_}) }
+    paginate_ \&url, $opt->{p}, [$count, $opt->{s}->results], 't', $opt->{s};
+
+    article_ class => 'browse charb', sub {
+        table_ class => 'stripe', sub {
+            tr_ sub {
+                td_ class => 'tc1', sub {
+                    charsex_ $_->{sex}, $_->{gender} if $_->{sex} || defined $_->{gender};
+                };
+                td_ class => 'tc2', sub {
+                    a_ href => "/$_->{id}", tattr $_;
+                    small_ sub {
+                        join_ ', ', sub { a_ href => "/$_->{id}", tattr $_ }, $_->{vn}->@*;
+                    };
+                };
+            } for @$list;
+        }
+    } if $opt->{s}->rows;
+
+    article_ class => 'charbcard', sub {
+        my($w,$h) = (90,120);
+        div_ sub {
+            div_ sub {
+                if($_->{image}) {
+                    my($iw,$ih) = imgsize $_->{image}{width}*100, $_->{image}{height}*100, $w, $h;
+                    image_ $_->{image}, alt => $_->{title}[1], width => $iw, height => $ih, url => "/$_->{id}", overlay => 0;
+                } else {
+                    txt_ 'no image';
+                }
+            };
+            div_ sub {
+                charsex_ $_->{sex}, $_->{gender} if $_->{sex} || defined $_->{gender};
+                a_ href => "/$_->{id}", tattr $_;
+                br_;
+                small_ sub {
+                    join_ ', ', sub { a_ href => "/$_->{id}", tattr $_ }, $_->{vn}->@*;
+                };
+            };
+        } for @$list;
+    } if $opt->{s}->cards;
+
+
+    article_ class => 'charbgrid', sub {
+        a_ href => "/$_->{id}", title => $_->{title}[3],
+            !$_->{image} || image_hidden($_->{image}) ? () : (style => 'background-image: url("'.imgurl($_->{image}{id}).'")'),
+        sub {
+            span_ $_->{title}[1];
+        } for @$list;
+    } if $opt->{s}->grid;
+
+    paginate_ \&url, $opt->{p}, [$count, $opt->{s}->results], 'b';
+}
+
+
+# Also used by VNWeb::TT::TraitPage
+sub enrich_listing($lst) {
+    fu->enrich(aoh => 'vn', sub { SQL '
+        SELECT DISTINCT cv.id, v.id, v.title, v.sorttitle
+          FROM chars_vns cv
+          JOIN', VNT, 'v ON v.id = cv.vid
+         WHERE NOT v.hidden AND cv.spoil = 0 AND cv.id', IN $_, '
+         ORDER BY v.sorttitle'
+    }, $lst);
+}
+
+
+FU::get qr{/c(?:/(?<char>all|[a-z0]))?}, sub($char=undef) {
+    my $opt = fu->query(
+        q => { searchquery => 1 },
+        p => { upage => 1 },
+        f => { advsearch_err => 'c' },
+        ch=> { onerror => undef, accept_array => 'first', enum => ['0', 'a'..'z'] },
+        fil=>{ onerror => undef },
+        s => { tableopts => $TABLEOPTS },
+    );
+
+    # compat with old URLs
+    $opt->{ch} //= $char if defined $char && $char ne 'all';
+
+    # URL compatibility with old filters
+    if(!$opt->{f}->{query} && $opt->{fil}) {
+        my $q = eval {
+            my $f = filter_char_adv filter_parse c => $opt->{fil};
+            FU::Validate->compile({ advsearch => 'c' })->validate(@$f > 1 ? $f : undef);
+        };
+        fu->redirect(perm => fu->path.'?'.query_encode({%$opt, fil => undef, f => $q})) if $q;
+    }
+
+    $opt->{f} = advsearch_default 'c' if !$opt->{f}{query} && !defined fu->query('f');
+
+    my $where = AND
+        'NOT c.hidden', $opt->{f}->WHERE(),
+        defined($opt->{ch}) ? SQL 'match_firstchar(c.sorttitle, ', $opt->{ch}, ')' : ();
+
+    my $time = time;
+    my($count, $list);
+    db_maytimeout {
+        $count = fu->SQL('SELECT count(*) FROM', CHARST, 'c WHERE', AND $where, $opt->{q}->WHERE('c', 'c.id'))->val;
+        $list = $count ? fu->SQL('
+            SELECT c.id, c.title, c.sex, c.gender, c.image
+              FROM', CHARST, 'c', $opt->{q}->JOIN('c', 'c.id'), '
+             WHERE', $where, '
+             ORDER BY', $opt->{q} ? 'sc.score DESC, ' : (), 'c.sorttitle, c.id', '
+             LIMIT', $opt->{s}->results(), 'OFFSET', $opt->{s}->results()*($opt->{p}-1)
+        )->allh : [];
+    } || (($count, $list) = (undef, []));
+
+    enrich_listing $list;
+    enrich_image_obj image => $list if !$opt->{s}->rows;
+    $time = time - $time;
+
+    framework_ title => 'Browse characters', sub {
+        form_ action => '/c', method => 'get', sub {
+            article_ sub {
+                h1_ 'Browse characters';
+                searchbox_ c => $opt->{q}//'';
+                p_ class => 'browseopts', sub {
+                    button_ type => 'submit', name => 'ch', value => ($_//''), ($_//'') eq ($opt->{ch}//'') ? (class => 'optselected') : (), !defined $_ ? 'ALL' : $_ ? uc $_ : '#'
+                    for (undef, 'a'..'z', 0);
+                };
+                input_ type => 'hidden', name => 'ch', value => $opt->{ch}//'';
+                $opt->{f}->widget_($count, $time);
+            };
+            listing_ $opt, $list, $count if $count;
+        }
+    };
+};
+
+1;

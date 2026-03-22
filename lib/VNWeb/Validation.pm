@@ -1,0 +1,498 @@
+package VNWeb::Validation;
+
+use v5.36;
+use FU;
+use FU::Util 'uri_escape', 'query_encode';
+use FU::SQL;
+use VNDB::Types;
+use VNDB::Config;
+use VNDB::ExtLinks 'extlink_parse', 'extlink_fmt';
+use VNWeb::Auth;
+use VNWeb::DB;
+use VNDB::Func 'gtintype';
+use Time::Local 'timegm';
+use Carp 'croak';
+use Exporter 'import';
+
+our @EXPORT = qw/
+    %RE
+    samesite
+    is_api
+    not_moe
+    is_unique_username
+    ipinfo
+    form_compile
+    validate_dbid validate_maxrev
+    can_edit
+    viewget viewset
+/;
+
+
+# Regular expressions for use in path registration
+my $num = qr{[1-9][0-9]{0,6}}; # Allow up to 10 mil, SQL vndbid type can't handle more than 2^26-1 (~ 67 mil).
+my $rev = qr{(?:\.($num))};
+our %RE = (
+    # Doesn't capture
+    num  => $num,
+    # Gives a single capture
+    uid  => qr{(u$num)},
+    vid  => qr{(v$num)},
+    rid  => qr{(r$num)},
+    sid  => qr{(s$num)},
+    cid  => qr{(c$num)},
+    pid  => qr{(p$num)},
+    iid  => qr{(i$num)},
+    did  => qr{(d$num)},
+    tid  => qr{(t$num)},
+    gid  => qr{(g$num)},
+    wid  => qr{(w$num)},
+    qid  => qr{(q$num)},
+    imgid=> qr{((?:ch|cv|sf)$num)},
+    # Gives one or two captures
+    vrev => qr{(v$num)$rev?},
+    rrev => qr{(r$num)$rev?},
+    prev => qr{(p$num)$rev?},
+    srev => qr{(s$num)$rev?},
+    crev => qr{(c$num)$rev?},
+    drev => qr{(d$num)$rev?},
+    grev => qr{(g$num)$rev?},
+    irev => qr{(i$num)$rev?},
+);
+
+
+for my ($k,$v) (
+    id          => { uint => 1, max => (1<<26)-1 },
+    undefbool   => { _scalartype => 3, type => 'any', default => sub { defined $_[0] ? !!$_[0] : undef }, func => sub { $_[0] = !!$_[0]; 1 } },
+    # 'vndbid' SQL type, accepts an arrayref with accepted prefixes.
+    # If only one prefix is supported, it will also take integers and normalizes them into the formatted form.
+    vndbid      => sub {
+        my $multi = ref $_[0];
+        my $types = $multi ? join '|', $_[0]->@* : $_[0];
+        my $re = qr/^(?:$types)[1-9][0-9]{0,6}$/;
+        +{ func => sub { $_[0] = "${types}$_[0]" if !$multi && $_[0] =~ /^[1-9][0-9]{0,6}$/; return $_[0] =~ $re || { types => $types, got => $_[0] } } }
+    },
+    sl          => { regex => qr/^[^\t\r\n]+$/ }, # "Single line", also excludes tabs because they're weird.
+    editsum     => { length => [ 2, 5000 ] },
+    page        => { uint => 1, min => 1, max => 1000, default => 1, onerror => 1 },
+    upage       => { uint => 1, min => 1, default => 1, onerror => 1 }, # pagination without a maximum
+    username    => { regex => qr/^(?!-*[a-zA-Z][0-9]+-*$)[a-zA-Z0-9-]*$/, minlength => 2, maxlength => 15 },
+    password    => { length => [ 4, 500 ] },
+    language    => { enum => \%LANGUAGE },
+    gtin        => { default => 0, func => sub { $_[0] = 0 if !length $_[0]; $_[0] eq 0 || gtintype($_[0]) } },
+    rdate       => { uint => 1, func => \&_validate_rdate },
+    fuzzyrdate  => { default => 0, func => \&_validate_fuzzyrdate },
+    searchquery => { onerror => bless([],'VNWeb::Validate::SearchQuery'), func => sub { $_[0] = bless([$_[0]], 'VNWeb::Validate::SearchQuery'); 1 } },
+    extlinks    => \&_validate_extlinks,
+    # Calendar date, limited to 1970 - 2099 for sanity.
+    # TODO: Should also validate whether the day exists, currently "2022-11-31" is accepted, but that's a bug.
+    caldate     => { regex => qr/^(?:19[7-9][0-9]|20[0-9][0-9])-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$/ },
+    # An array that may be either missing (returns undef), a single scalar (returns single-element array) or a proper array
+    undefarray  => sub { +{ default => undef, accept_scalar => 1, elems => $_[0] } },
+    # Accepts a user-entered vote string (or '-' or empty) and converts that into a DB vote number (or undef) - opposite of fmtvote()
+    vnvote      => { default => undef, regex => qr/^(?:|-|[1-9]|10|[1-9]\.[0-9]|10\.0)$/, func => sub { $_[0] = $_[0] eq '-' ? undef : 10*$_[0]; 1 } },
+    # Array-of-hashes
+    aoh         => sub { +{ elems => { keys => $_[0] } } },
+    # Used with 'aoh', sort by the given hash keys and ensure uniqueness
+    sort_keys   => sub {
+        my @keys = ref $_[0] ? $_[0]->@* : $_[0];
+        +{ unique => 1, sort => sub {
+            for(@keys) {
+                my $c = defined($_[0]{$_}) cmp defined($_[1]{$_}) || (defined($_[0]{$_}) && $_[0]{$_} cmp $_[1]{$_});
+                return $c if $c;
+            }
+            0
+        } }
+    },
+    # Fields query parameter for the API, supports multiple values or comma-delimited list, returns a hash.
+    fields      => sub {
+        my %keys = map +($_,1), ref $_[0] eq 'ARRAY' ? @{$_[0]} : $_[0];
+        +{ default => {}, elems => {}, accept_scalar => 1, func => sub {
+            my @l = map split(/\s*,\s*/,$_), @{$_[0]};
+            return 0 if grep !$keys{$_}, @l;
+            $_[0] = { map +($_,1), @l };
+            1;
+        } }
+    },
+) { $FU::Validate::default_validations{$k} = $v }
+
+$FU::Validate::error_format{vndbid} = sub($e) { "Invalid vndbid($e->{types}): $e->{got}" };
+
+
+sub _validate_rdate {
+    return 0 if $_[0] ne 0 && $_[0] !~ /^([0-9]{4})([0-9]{2})([0-9]{2})$/;
+    my($y, $m, $d) = $_[0] eq 0 ? (0,0,0) : ($1, $2, $3);
+
+    # Re-normalize
+    ($m, $d) = (0, 0) if $y == 0;
+    $m = 99 if $y == 9999;
+    $d = 99 if $m == 99;
+    $_[0] = $y*10000 + $m*100 + $d;
+
+    return 0 if $y && $y != 9999 && ($y < 1980 || $y > 2100);
+    return 0 if $y && $m != 99 && (!$m || $m > 12);
+    return 0 if $y && $d != 99 && !eval { timegm(0, 0, 0, $d, $m-1, $y) };
+    return 1;
+}
+
+
+sub _validate_fuzzyrdate {
+    $_[0] = 0 if $_[0] =~ /^unknown$/i;
+    $_[0] = 1 if $_[0] =~ /^today$/i;
+    $_[0] = 99999999 if $_[0] =~ /^tba$/i;
+    $_[0] = "${1}9999" if $_[0] =~ /^([0-9]{4})$/;
+    $_[0] = "${1}${2}99" if $_[0] =~ /^([0-9]{4})-([0-9]{2})$/;
+    $_[0] = "${1}${2}$3" if $_[0] =~ /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
+    return 1 if $_[0] eq 1;
+    _validate_rdate($_[0]);
+}
+
+
+sub _validate_extlinks($t) {
+    my $L = \%VNDB::ExtLinks::LINKS;
+    my %sites = map +($_, $L->{$_}), grep $L->{$_}{ent} =~ /$t/i, keys %$L;
+    +{ default => [], unique => sub {
+        $sites{$_[0]{site}}{ent} =~ /\U$t/ ? "$_[0]{site} $_[0]{value}" : $_[0]{site}
+    }, elems => {
+        keys => {
+            site  => { enum => \%sites },
+            value => { maxlength => 512 },
+            data  => { default => '', maxlength => 512 },
+            split => { default => [], type => 'array' },
+        },
+        func => sub {
+            return 1 if !$sites{$_[0]{site}}{parse};
+            my $url = extlink_fmt @{$_[0]}{qw/site value data/} or return 0;
+            @{$_[0]}{qw/site value data/} = extlink_parse $url;
+            $_[0]{site} && $sites{$_[0]{site}} ? 1 : 0
+        }
+    } };
+}
+
+
+# Aborts this requests and throws a 404 when configured in moe mode.
+sub not_moe { fu->notfound if config->{moe} }
+
+
+# returns true if this request originated from the same site, i.e. not an external referer.
+sub samesite {
+    my $site = fu->header('sec-fetch-site');
+    $site ? $site eq 'same-site' || $site eq 'same-origin' : !!fu->cookie('samesite')
+}
+
+# returns true if this request is for an /api/ URL.
+sub is_api { config->{api} eq 'only' || (config->{api} && fu->path =~ /^\/api\//) }
+
+# Test uniqueness of a username in the database. Usernames with similar
+# homographs are considered duplicate.
+# (Would be much faster and safer to do this normalization in the DB and put a
+# unique constraint on the normalized name, but we have a bunch of existing
+# username clashes that I can't just change)
+sub is_unique_username {
+    my($name, $excludeid) = @_;
+    my sub norm {
+        # lowercase, normalize 'i1l' and '0o'
+        SQL "regexp_replace(regexp_replace(lower(", $_[0], "), '[1l]', 'i', 'g'), '0', 'o', 'g')"
+    };
+    !fu->SQL('SELECT 1 FROM users WHERE', norm('username'), '=', norm($name),
+        $excludeid ? ('AND id <>', $excludeid) : (),
+        'LIMIT 1'
+    )->val;
+}
+
+
+# Lookup IP and return a hash corresponding to the 'ipinfo' SQL type.
+sub ipinfo {
+    my $ip = shift || fu->ip;
+    state $db = config->{location_db} && do {
+        require Location;
+        Location::init(config->{location_db});
+    };
+    return { ip => $ip } if !$db;
+
+    my sub f { !!Location::lookup_network_has_flag($db, $ip, "LOC_NETWORK_FLAG_$_[0]") }
+    my $asn = Location::lookup_asn($db, $ip);
+    return {
+        ip      => $ip,
+        country => Location::lookup_country_code($db,$ip),
+        asn     => $asn,
+        as_name => $asn && Location::get_as_name($db, $asn),
+        anonymous_proxy    => f('ANONYMOUS_PROXY'),
+        sattelite_provider => f('SATELLITE_PROVIDER'),
+        anycast => f('ANYCAST'),
+        drop    => f('DROP')
+    };
+}
+
+
+# Recursively remove keys from hashes that have a '_when' key that doesn't
+# match $when. This is a quick and dirty way to create multiple validation
+# schemas from a single schema. For example:
+#
+#   {
+#       title => { _when => 'input' },
+#       name  => { },
+#   }
+#
+# If $when is 'input', then this function returns:
+#   { title => {}, name => {} }
+# Otherwise, it returns:
+#   { name => {} }
+sub _stripwhen {
+    my($when, $o) = @_;
+    return $o if ref $o ne 'HASH';
+    +{ map $_ eq '_when' || (ref $o->{$_} eq 'HASH' && defined $o->{$_}{_when} && $o->{$_}{_when} !~ $when) ? () : ($_, _stripwhen($when, $o->{$_})), keys %$o }
+}
+
+
+# Short-hand to compile a validation schema for a form. Usage:
+#
+#   form_compile $when, {
+#       title => { _when => 'input' },
+#       name  => { },
+#       ..
+#   };
+#
+# Also supports compiling with multiple $when's in a single call:
+#
+#   my ($IN, $OUT) = form_compile 'in', 'out', { .. };
+#
+sub form_compile {
+    my $schema = pop;
+    my @l = map FU::Validate->compile({ keys => _stripwhen $_, $schema }), @_ ? @_ : ('any');
+    wantarray ? @l : $l[0];
+}
+
+
+# Validate identifiers against an SQL query. Similar to fu->enrich(), an IN()
+# clause is appended with the given identifiers.  The query must return exactly
+# 1 column, the id of each entry. This function throws an error if an id is
+# missing from the query. For example, to test for non-hidden VNs:
+#
+#   validate_dbid 'SELECT id FROM vn WHERE NOT hidden AND id', 2,3,5,7,...;
+#
+# If any of those ids is hidden or not in the database, an error is thrown.
+sub validate_dbid {
+    return if @_ < 2;
+    my @ids = @_[1..$#_];
+    my $sql = ref $_[0] eq 'CODE' ? do { local $_ = \@ids; SQL $_[0]->() } : SQL $_[0], IN \@ids;
+    my $dbids = fu->SQL($sql)->kvv;
+    my @missing = grep !$dbids->{$_}, @ids;
+    return if !@missing;
+    # If this is a js_api, return a more helpful error message
+    fu->send_json({_err => "Invalid reference to ".join ', ', @missing}) if fu->path =~ /^\/js\//;
+    croak "Invalid database IDs: ".join ',', @missing;
+}
+
+
+# Used from JS entry edit APIs to prevent edit conflicts.
+sub validate_maxrev($o, $n) {
+    fu->send_json({_err => 'maxrev'}) if $o->{maxrev} && $n->{maxrev} && $o->{maxrev} != $n->{maxrev};
+}
+
+
+# Returns whether the current user can edit the given database entry.
+#
+# Supported types:
+#
+#   u:
+#     Requires 'id' field, can only test for editing.
+#
+#   t:
+#     If no 'id' field, checks if the user can create a new thread
+#       (permission to post in specific boards is not handled here).
+#     If no 'num' field, checks if the user can reply to the existing thread.
+#       Requires the 'locked' field.
+#       Assumes the user is permitted to see the thread in the first place, i.e. neither hidden nor private.
+#     Otherwise, checks if the user can edit the post.
+#       Requires the 'user_id', 'date' and 'hidden' fields.
+#
+#   w:
+#     If no 'id' field, checks if the user can submit a new review.
+#     Otherwise, checks if the user can edit the review.
+#       Requires the 'uid' field.
+#
+#   g/i:
+#     If no 'id' field, checks if the user can create a new tag/trait.
+#     Otherwise, checks if the user can edit the entry.
+#
+#   'dbentry_type's:
+#     If no 'id' field, checks whether the user can create a new entry.
+#     Otherwise, requires 'entry_hidden' and 'entry_locked' fields.
+#
+sub can_edit {
+    my($type, $entry) = @_;
+
+    return auth->permUsermod || (auth && $entry->{id} eq auth->uid) if $type eq 'u';
+    return auth->permDbmod if $type eq 'd';
+
+    if($type eq 't') {
+        return 1 if auth->permBoardmod;
+        return 0 if !auth->permBoard || (global_settings->{lockdown_board} && !auth->isMod);
+        if(!$entry->{id}) {
+            # Allow at most 5 new threads per day per user.
+            return auth && fu->sql("SELECT count(*) < 5 FROM threads_posts WHERE num = 1 AND date > NOW()-'1 day'::interval AND uid = \$1", auth->uid)->val;
+        } elsif(!$entry->{num}) {
+            die "Can't do authorization test when 'locked' field isn't present" if !exists $entry->{locked};
+            return !$entry->{locked};
+        } else {
+            die "Can't do authorization test when hidden/date/user_id fields aren't present"
+                if !exists $entry->{hidden} || !exists $entry->{date} || !exists $entry->{user_id};
+            # beware: for threads the 'hidden' field is a non-undef boolean flag, for posts it is a possibly-undef text field.
+            my $hidden = $entry->{id} =~ /^t/ && $entry->{num} == 1 ? $entry->{hidden} : defined $entry->{hidden};
+            return auth && ($entry->{user_id}//'') eq auth->uid && !$hidden && $entry->{date} > time-config->{board_edit_time};
+        }
+    }
+
+    if($type eq 'w') {
+        return 1 if auth->permBoardmod;
+        return auth->permReview && (!global_settings->{lockdown_board} || auth->isMod) if !$entry->{id};
+        return auth && $entry->{user_id} && auth->uid eq $entry->{user_id};
+    }
+
+    if($type eq 'g' || $type eq 'i') {
+        return 1 if auth->permTagmod;
+        return auth->permEdit if !$entry->{id};
+        die if !exists $entry->{entry_hidden} || !exists $entry->{entry_locked};
+        # Let users edit their own tags/traits while it's still pending approval.
+        return auth && $entry->{entry_hidden} && !$entry->{entry_locked}
+            && fu->SQL('SELECT 1 FROM changes WHERE itemid =', $entry->{id}, 'AND rev = 1 AND requester =', auth->uid, 'LIMIT 1')->val;
+    }
+
+    die "Can't do authorization test when entry_hidden/entry_locked fields aren't present"
+        if $entry->{id} && (!exists $entry->{entry_hidden} || !exists $entry->{entry_locked});
+
+    auth->permDbmod || (auth->permEdit && !global_settings->{lockdown_edit} && !($entry->{entry_hidden} || $entry->{entry_locked}));
+}
+
+
+# Some user preferences can be overruled with a 'view' cookie.
+# viewget() can be used to fetch these parameters, viewset() to generate a
+# 'data-viewset' attribute with certain preferences overruled.
+#
+# The cookie has the following format:
+#   view=1   -> spoilers=1, traits_sexual=<default>
+#   view=2s  -> spoilers=2, traits_sexual=1
+#   view=2S  -> spoilers=2, traits_sexual=0
+#   view=S   -> spoilers=<default>, traits_sexual=0
+# i.e. a list of single-character flags:
+#   0-2 -> spoilers
+#   s/S -> 1/0 traits_sexual
+#   n/N -> 1/0 show_nsfw
+# Missing flags will use default.
+sub viewget {
+    fu->{view} ||= do {
+        my $view = fu->cookie(config->{cookie_prefix}.'view', { onerror => '' });
+        fu->set_cookie(config->{cookie_prefix}.'view', '', path => '/', 'max-age' => 0) if length $view;
+        my($sp, $ts, $ns, $path) = $view =~ /^([0-2])?([sS]?)([nN]?)-(.+)$/;
+        ($sp, $ts, $ns) = () if !$path || FU::Util::uri_unescape($path) ne fu->path;
+        {
+            spoilers      => $sp // auth->pref('spoilers') || 0,
+            traits_sexual => !$ts ? auth->pref('traits_sexual') : $ts eq 's',
+            show_nsfw     => !$ns ? (auth->pref('max_sexual')||0)==2 && (auth->pref('max_violence')||0)>0 : $ns eq 'n',
+        }
+    }
+}
+
+
+# Returns a list of <a> HTML attributes in order to link to the given $path with
+# some view settings overridden.
+sub viewset($path, %s) {
+    fu->{js}{basic} = 1;
+    (href => $path, 'data-setcookie' => config->{cookie_prefix}.'view='.join '',
+        $s{spoilers}//'',
+        !defined $s{traits_sexual} ? '' : $s{traits_sexual} ? 's' : 'S',
+        !defined $s{show_nsfw}     ? '' : $s{show_nsfw}     ? 'n' : 'N',
+        '-'.FU::Util::uri_escape($path =~ s/[\?#].*//r));
+}
+
+
+sub sendmail($body, %hs) {
+    croak 'No To: specified!' if !$hs{To};
+    croak 'No Subject: specified!' if !$hs{Subject};
+    $hs{'Content-Type'} ||= "text/plain; charset='UTF-8'";
+    $hs{From} ||= (config->{mail_from} || croak 'No From: specified!');
+
+    croak "Invalid email header '$_'" for grep /[\r\n]/, %hs;
+    my $mail = join('', map "$_: $hs{$_}\n", sort keys %hs)."\n$body";
+
+    return warn "The following mail would have been sent:\n$mail\n" if config->{mail_sendmail} eq 'log';
+
+    open my $mailer, '|-:utf8', config->{mail_sendmail}, '-t', '-f', $hs{From} or croak "Error opening sendmail ($!)";
+    print $mailer $mail;
+    croak "Error running sendmail ($!)" if !close $mailer;
+}
+
+
+# Object returned by the 'searchquery' validation, has some handy methods for generating SQL.
+package VNWeb::Validate::SearchQuery {
+    use FU;
+    use FU::SQL;
+    use VNWeb::DB;
+
+    sub TO_QUERY { $_[0][0] }
+    sub TO_JSON { $_[0][0] }
+
+    sub words {
+        $_[0][1] //= length $_[0][0]
+            ? [ map s/%//rg, fu->sql('SELECT search_query($1)', $_[0][0])->val->@* ]
+            : []
+    }
+
+    use overload bool => sub { $_[0]->words->@* > 0 };
+    use overload '""' => sub { $_[0][0]//'' };
+
+    sub _isvndbid { my $l = $_[0]->words; @$l == 1 && $l->[0] =~ /^[vrpcsgi]$num$/ }
+
+    sub _WHERE($self, $type, $nothid=0) {
+        my $lst = $self->words;
+        my @keywords = map SQL('sc.label LIKE', ('%'.sql_like($_).'%')), @$lst;
+        AND
+            $type ? RAW "sc.id BETWEEN '${type}1' AND vndbid_max('$type')" : (),
+            $nothid ? 'sc.prio <> 4' : (),
+            $self->_isvndbid()
+                ? (SQL 'sc.id =', $lst->[0], 'OR', AND(@keywords))
+                : @keywords;
+    }
+
+    no warnings 'redefine';
+    sub WHERE($self, $type, $id, $subid=undef) {
+        return RAW '1=1' if !$self;
+        SQL 'EXISTS(SELECT 1 FROM search_cache sc WHERE', AND(
+            SQL('sc.id =', RAW $id), $subid ? SQL('sc.subid =', RAW $subid) : (),
+            $self->_WHERE($type),
+        ), ')';
+    }
+
+    # Returns a subquery that can be joined to get the search score.
+    # Columns (id, subid, score)
+    sub SCORE($self, $type) {
+        my $lst = $self->words;
+        my $q = join '', @$lst;
+        SQL '(SELECT id, subid, max(sc.prio * (', INTERSPERSE('+',
+                $self->_isvndbid() ? SQL('CASE WHEN sc.id =', $q, 'THEN 2 ELSE 0 END') : (),
+                SQL('CASE WHEN sc.label LIKE', sql_like($q).'%', 'THEN 0.5 ELSE 0 END'),
+                SQL('similarity(sc.label,', $q, ')'),
+            ), ')) AS score
+            FROM search_cache sc
+           WHERE', $self->_WHERE($type), '
+           GROUP BY id, subid
+        )';
+    }
+
+    # Optionally returns a JOIN clause for SCORE, aliassed 'sc'
+    sub JOIN($self, $type, $id, $subid=undef) {
+        return RAW '' if !$self;
+        SQL 'JOIN', $self->SCORE($type), 'sc ON sc.id =', RAW $id, $subid ? ('AND sc.subid =', RAW $subid) : ();
+    }
+
+    # Same as JOIN(), but accepts an array of SearchQuery objects that are OR'ed together.
+    sub JOINA($lst, $type, $id, $subid=undef) {
+        SQL 'JOIN (
+            SELECT id, subid, max(score) AS score
+              FROM (', INTERSPERSE('UNION ALL', map SQL('SELECT * FROM', $_->SCORE($type), 'x'), @$lst), ') x
+             GROUP BY id, subid
+          ) sc ON sc.id =', RAW $id, $subid ? ('AND sc.subid =', RAW $subid) : ();
+    }
+};
+
+1;
