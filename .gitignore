@@ -1,0 +1,9 @@
+/docker/
+/gen/
+/var/
+*.swp
+*.o
+*.so
+*.dll
+*.bc
+*~
